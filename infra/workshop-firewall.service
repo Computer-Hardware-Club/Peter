@@ -1,0 +1,14 @@
+[Unit]
+Description=Workshop guest network firewall
+After=systemd-sysctl.service
+Before=incus.service docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/nft -f /opt/workshop/infra/firewall.nft
+ExecStartPost=/usr/sbin/sysctl -w net.ipv4.ip_forward=1
+ExecReload=/usr/sbin/nft -f /opt/workshop/infra/firewall.nft
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

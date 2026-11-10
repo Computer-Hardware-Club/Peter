@@ -1,0 +1,11 @@
+.DS_Store
+.omx/
+.playwright-cli/
+.env
+stack.env
+event.json
+tunnel-token
+__pycache__/
+*.pyc
+*.backup
+*.tar.gz

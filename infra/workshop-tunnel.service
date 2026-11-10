@@ -1,0 +1,17 @@
+[Unit]
+Description=Workshop Cloudflare Tunnel connector
+Wants=network-online.target
+Requires=workshop-portal.service
+After=network-online.target workshop-portal.service
+ConditionPathExists=/etc/workshop/tunnel-token
+
+[Service]
+DynamicUser=yes
+LoadCredential=tunnel-token:/etc/workshop/tunnel-token
+ExecStart=/usr/bin/cloudflared tunnel --no-autoupdate run --token-file ${CREDENTIALS_DIRECTORY}/tunnel-token
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,413 @@
+#!/usr/bin/env python3
+"""Manage one event of two to four isolated Incus workshop VMs."""
+
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+
+HOME_DIR = Path(__file__).resolve().parent
+STATE_DIR = Path("/var/lib/workshop")
+STATE_FILE = STATE_DIR / "event.json"
+POOL_DIR = Path("/var/lib/incus/storage-pools/workshop")
+PORTAL = "https://workshop.computerhardwareclub.org/"
+GUACD_IP = "172.31.253.4"
+OWNER_KEY = "user.workshop.run"
+SLUG = re.compile(r"[a-z][a-z0-9-]{0,23}")
+FINGERPRINT = re.compile(r"[0-9a-f]{64}")
+
+
+def run(*command, input_text=None, timeout=180):
+    result = subprocess.run(command, input=input_text or "", capture_output=True,
+                            text=True, timeout=timeout, check=True)
+    return result.stdout.strip()
+
+
+def incus(*args, project="workshop", **kwargs):
+    return run("incus", "--force-local", "--project", project, *args, **kwargs)
+
+
+def db(statement):
+    try:
+        return run(
+            "docker", "compose", "--project-directory", str(HOME_DIR / "infra"),
+            "--env-file", str(STATE_DIR / "stack.env"), "exec", "-T", "--user",
+            "postgres", "db", "psql", "-XqAt", "-v", "ON_ERROR_STOP=1",
+            "--dbname", "guacamole", input_text=statement, timeout=30,
+        )
+    except subprocess.CalledProcessError as exc:
+        # PostgreSQL diagnostics can contain parts of the submitted key.
+        raise RuntimeError("Guacamole database command failed. Check workshop-db-1 health.") from exc
+
+
+def literal(value):
+    return "'" + value.replace("'", "''") + "'"
+
+
+def save(event):
+    with tempfile.NamedTemporaryFile(mode="w", dir=STATE_DIR, prefix=".event-",
+                                     delete=False) as output:
+        try:
+            json.dump(event, output)
+            output.flush()
+            os.fsync(output.fileno())
+            os.replace(output.name, STATE_FILE)
+            sync_state_directory()
+        finally:
+            Path(output.name).unlink(missing_ok=True)
+
+
+def sync_state_directory():
+    fd = os.open(STATE_DIR, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def load_event():
+    try:
+        return json.loads(STATE_FILE.read_text())
+    except FileNotFoundError:
+        return None
+
+
+def guests():
+    return {vm["name"]: vm for vm in json.loads(incus("list", "--format", "json"))}
+
+
+def networks():
+    return {net["name"]: net for net in json.loads(
+        incus("network", "list", "--format", "json", project="default")
+    )}
+
+
+def identity(slot):
+    return f"ws-team-{slot}", f"wks{slot}", f"10.241.{slot}.2", f"10.241.{slot}.1"
+
+
+def require_owner(resource, name, event):
+    if resource and (resource.get("config") or {}).get(OWNER_KEY) != event["run"]:
+        raise RuntimeError(f"Refusing to modify {name}: ownership does not match this event.")
+
+
+def check_host(slots):
+    run("systemctl", "is-active", "--quiet", "workshop-firewall.service")
+    run("nft", "list", "table", "inet", "workshop")
+    run("nft", "list", "table", "bridge", "workshop")
+    free = shutil.disk_usage(POOL_DIR).free
+    if free < (16 + 10 * slots) * 1024**3:
+        raise RuntimeError(f"Need at least {16 + 10 * slots} GiB free for VM disks and host reserve.")
+    if db("SELECT count(*) FROM guacamole_system_permission;") != "0":
+        raise RuntimeError("Unexpected Guacamole system permissions. Check portal administration.")
+
+
+def create_bridge(slot, event):
+    _, bridge, _, gateway = identity(slot)
+    incus(
+        "network", "create", bridge, f"ipv4.address={gateway}/30", "ipv4.nat=false",
+        "ipv4.dhcp=false", "ipv4.firewall=false", "ipv6.address=none",
+        "ipv6.firewall=false", "dns.mode=none", "raw.dnsmasq=port=0",
+        f"{OWNER_KEY}={event['run']}",
+        project="default",
+    )
+
+
+def create_guest(slot, event, public_key):
+    name, bridge, address, gateway = identity(slot)
+    mac = f"02:77:6b:73:00:{slot:02x}"
+    # Use a single narrow return route for SSH and no default gateway or DNS.
+    network = {
+        "version": 2,
+        "ethernets": {"eth0": {
+            "match": {"macaddress": mac}, "dhcp4": False, "dhcp6": False,
+            "accept-ra": False, "link-local": [], "addresses": [f"{address}/30"],
+            "routes": [{"to": f"{GUACD_IP}/32", "via": gateway}],
+        }},
+    }
+    user_data = {
+        "disable_root": True,
+        "ssh_pwauth": False,
+        "ssh_deletekeys": True,
+        "ssh_genkeytypes": ["ed25519"],
+        "users": [{
+            "name": "student", "shell": "/bin/bash", "groups": ["sudo"],
+            "sudo": ["ALL=(ALL) NOPASSWD:ALL"], "lock_passwd": True,
+            "ssh_authorized_keys": [f'from="{GUACD_IP}" {public_key}'],
+        }],
+        "write_files": [{
+            "path": "/etc/ssh/sshd_config.d/00-workshop.conf",
+            "permissions": "0644",
+            "content": "AllowUsers student\nPermitRootLogin no\nDisableForwarding yes\n",
+        }],
+        "runcmd": [["systemctl", "restart", "ssh.service"]],
+    }
+    incus(
+        "init", event["image"], name, "--vm", "--profile", "workshop-vm",
+        "--config", f"{OWNER_KEY}={event['run']}",
+        "--config", "cloud-init.network-config=" + json.dumps(network),
+        "--config", "cloud-init.user-data=#cloud-config\n" + json.dumps(user_data),
+    )
+    incus("config", "device", "add", name, "eth0", "nic", f"network={bridge}",
+          "name=eth0", f"hwaddr={mac}")
+    incus("start", name)
+
+
+def wait_for_ssh(slot):
+    name, _, address, _ = identity(slot)
+    deadline = time.monotonic() + 180
+    while time.monotonic() < deadline:
+        try:
+            key = incus(
+                "exec", name, "--", "bash", "-ec",
+                "test -f /var/lib/cloud/instance/boot-finished; "
+                "sudo -n -u student sudo -n true; "
+                "cat /etc/ssh/ssh_host_ed25519_key.pub",
+                timeout=8,
+            ).split()
+            if len(key) >= 2 and key[0] == "ssh-ed25519":
+                # From the real proxy namespace, so this checks the actual firewall path.
+                run("docker", "exec", "workshop-guacd-1", "nc", "-z", "-w", "2",
+                    address, "22", timeout=4)
+                return f"{address} {key[0]} {key[1]}"
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            pass
+        time.sleep(2)
+    raise RuntimeError(f"{name} did not become reachable over SSH. Check its Incus console.")
+
+
+def grant_access(slot, team, ssh_key, host_key):
+    _, _, address, _ = identity(slot)
+    username = literal(team["login"])
+    salt = secrets.token_bytes(32)
+    digest = hashlib.sha256((team["password"] + salt.hex().upper()).encode()).hexdigest()
+    params = {
+        "hostname": address, "port": "22", "username": "student",
+        "private-key": ssh_key, "host-key": host_key, "enable-sftp": "false",
+        "server-alive-interval": "30",
+    }
+    values = ", ".join(f"({literal(k)}, {literal(v)})" for k, v in params.items())
+    db(f"""
+BEGIN;
+INSERT INTO guacamole_entity (name, type) VALUES ({username}, 'USER');
+INSERT INTO guacamole_user (entity_id, password_hash, password_salt, password_date)
+SELECT entity_id, decode('{digest}', 'hex'), decode('{salt.hex()}', 'hex'), now()
+FROM guacamole_entity WHERE name = {username} AND type = 'USER';
+INSERT INTO guacamole_connection (connection_name, protocol, max_connections, max_connections_per_user)
+VALUES ({username}, 'ssh', 6, 6);
+INSERT INTO guacamole_connection_parameter (connection_id, parameter_name, parameter_value)
+SELECT connection_id, parameter_name, parameter_value
+FROM guacamole_connection CROSS JOIN (VALUES {values}) AS p(parameter_name, parameter_value)
+WHERE connection_name = {username} AND parent_id IS NULL;
+INSERT INTO guacamole_connection_permission (entity_id, connection_id, permission)
+SELECT entity_id, connection_id, 'READ' FROM guacamole_entity CROSS JOIN guacamole_connection
+WHERE name = {username} AND type = 'USER' AND connection_name = {username} AND parent_id IS NULL;
+COMMIT;
+""")
+
+
+def revoke_access(teams):
+    names = ", ".join(literal(team["login"]) for team in teams)
+    db(f"""
+BEGIN;
+DELETE FROM guacamole_entity WHERE type = 'USER' AND name IN ({names});
+DELETE FROM guacamole_connection WHERE parent_id IS NULL AND connection_name IN ({names});
+COMMIT;
+""")
+
+
+def provision(event, slots):
+    # Persist intent first. After interruption, reset can rebuild pending slots.
+    save(event)
+    with tempfile.TemporaryDirectory(prefix="workshop-keys-", dir="/run") as tmp:
+        for slot in slots:
+            name, bridge, _, _ = identity(slot)
+            print(f"Starting {name}", flush=True)
+            if bridge not in networks():
+                create_bridge(slot, event)
+            key = str(Path(tmp) / str(slot))
+            run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", key)
+            create_guest(slot, event, Path(key + ".pub").read_text().strip())
+        for slot in slots:
+            host_key = wait_for_ssh(slot)
+            team = event["teams"][slot - 1]
+            grant_access(slot, team, (Path(tmp) / str(slot)).read_text(), host_key)
+            team["ready"] = True
+            save(event)
+            print(f"{identity(slot)[0]} is ready", flush=True)
+
+
+def deploy(args):
+    if load_event():
+        raise RuntimeError("An event already exists. Use status, reset, or destroy.")
+    if not SLUG.fullmatch(args.name) or not SLUG.fullmatch(args.template):
+        raise RuntimeError("Event and template names must be lowercase slugs of up to 24 characters.")
+    template_path = HOME_DIR / "templates" / f"{args.template}.json"
+    if not template_path.is_file():
+        raise RuntimeError(f"Template {args.template} does not exist.")
+    template = json.loads(template_path.read_text())
+    image = next((
+        item["fingerprint"] for item in json.loads(incus("image", "list", "--format", "json"))
+        if item["type"] == "virtual-machine"
+        and any(alias["name"] == template["image"] for alias in item["aliases"] or [])
+    ), "")
+    if not FINGERPRINT.fullmatch(image):
+        raise RuntimeError("The template image alias must point to a local virtual-machine image.")
+    check_host(args.teams)
+    existing_guests = guests()
+    existing_networks = networks()
+    for slot in range(1, args.teams + 1):
+        name, bridge, _, _ = identity(slot)
+        if name in existing_guests or bridge in existing_networks:
+            raise RuntimeError(f"Reserved name {name} or {bridge} is already in use.")
+    event_id = secrets.token_hex(8)
+    event = {
+        "name": args.name, "run": event_id, "template": args.template, "image": image,
+        "teams": [
+            {"login": f"{args.name}-{event_id[:8]}-team-{slot}",
+             "password": secrets.token_urlsafe(24), "ready": False}
+            for slot in range(1, args.teams + 1)
+        ],
+    }
+    provision(event, range(1, args.teams + 1))
+
+
+def remove_guest(slot, event, current):
+    name, _, _, _ = identity(slot)
+    vm = current.get(name)
+    require_owner(vm, name, event)
+    if vm:
+        incus("delete", name, "--force")
+
+
+def reset(event, slot):
+    slots = [slot] if slot else list(range(1, len(event["teams"]) + 1))
+    check_host(len(slots))
+    current, bridges = guests(), networks()
+    for number in slots:
+        name, bridge, _, _ = identity(number)
+        require_owner(current.get(name), name, event)
+        require_owner(bridges.get(bridge), bridge, event)
+    teams = [event["teams"][number - 1] for number in slots]
+    for team in teams:
+        team.update(password=secrets.token_urlsafe(24), ready=False)
+    save(event)
+    revoke_access(teams)
+    for number in slots:
+        remove_guest(number, event, current)
+    provision(event, slots)
+
+
+def destroy(event):
+    current, bridges = guests(), networks()
+    slots = range(1, len(event["teams"]) + 1)
+    for slot in slots:
+        name, bridge, _, _ = identity(slot)
+        require_owner(current.get(name), name, event)
+        require_owner(bridges.get(bridge), bridge, event)
+    for team in event["teams"]:
+        team["ready"] = False
+    save(event)
+    revoke_access(event["teams"])
+    for slot in slots:
+        _, bridge, _, _ = identity(slot)
+        remove_guest(slot, event, current)
+        if bridge in bridges:
+            incus("network", "delete", bridge, project="default")
+    names = ", ".join(literal(team["login"]) for team in event["teams"])
+    db(f"""
+BEGIN;
+DELETE FROM guacamole_user_history WHERE username IN ({names});
+DELETE FROM guacamole_connection_history WHERE username IN ({names}) OR connection_name IN ({names});
+COMMIT;
+""")
+    STATE_FILE.unlink()
+    sync_state_directory()
+    print("Workshop event destroyed.")
+
+
+def status(event):
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:8080/", timeout=3) as portal:
+            print(f"Portal HTTP {portal.status}")
+    except (urllib.error.URLError, TimeoutError):
+        print("Portal unavailable")
+    if not event:
+        print("No workshop event.")
+        return
+    print(f"{event['name']} | {event['template']} | image {event['image'][:12]}")
+    current = guests()
+    for slot, team in enumerate(event["teams"], 1):
+        name, _, address, _ = identity(slot)
+        state = current.get(name, {}).get("status", "Missing")
+        access = "ready" if team["ready"] else "pending"
+        print(f"Team {slot}: {name} {address} {state} | portal {access}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="action", required=True)
+    new = commands.add_parser("deploy")
+    new.add_argument("name")
+    new.add_argument("--template", default="ubuntu-basics")
+    new.add_argument("--teams", type=int, choices=range(2, 5), required=True)
+    commands.add_parser("status", aliases=["list"])
+    commands.add_parser("destroy").add_argument("--yes", action="store_true", required=True)
+    replacement = commands.add_parser("reset")
+    selection = replacement.add_mutually_exclusive_group(required=True)
+    selection.add_argument("--team", type=int, choices=range(1, 5))
+    selection.add_argument("--all", action="store_true")
+    replacement.add_argument("--yes", action="store_true", required=True)
+    commands.add_parser("credentials").add_argument("--team", type=int, choices=range(1, 5),
+                                                    required=True)
+    args = parser.parse_args()
+    if os.geteuid() != 0:
+        parser.error("run workshop with sudo on Peter")
+    os.umask(0o077)
+    if args.action in {"status", "list"}:
+        status(load_event())
+        return
+    with (STATE_DIR / "lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        event = load_event()
+        if args.action == "deploy":
+            deploy(args)
+        elif not event:
+            if args.action == "destroy":
+                print("No workshop event.")
+            else:
+                raise RuntimeError("No workshop event.")
+        elif getattr(args, "team", None) and args.team > len(event["teams"]):
+            raise RuntimeError("That team does not exist in this event.")
+        elif args.action == "reset":
+            reset(event, args.team)
+        elif args.action == "destroy":
+            destroy(event)
+        else:
+            team = event["teams"][args.team - 1]
+            if not team["ready"]:
+                raise RuntimeError("That team's portal access is pending. Check status or reset.")
+            print(f"URL: {PORTAL}\nUsername: {team['login']}\nPassword: {team['password']}")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except subprocess.CalledProcessError as error:
+        print(f"workshop: {error.stderr.strip() or error.cmd[0] + ' command failed'}",
+              file=sys.stderr)
+        sys.exit(1)
+    except (RuntimeError, OSError, subprocess.TimeoutExpired) as error:
+        print(f"workshop: {error}", file=sys.stderr)
+        sys.exit(1)

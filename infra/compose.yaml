@@ -1,0 +1,116 @@
+name: workshop
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    logging: {driver: local}
+    command: [postgres, -c, log_min_error_statement=panic]
+    mem_limit: 512m
+    pids_limit: 100
+    environment:
+      POSTGRES_DB: guacamole
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      APP_DB_PASSWORD: ${POSTGRESQL_PASSWORD:?}
+    volumes:
+      - database:/var/lib/postgresql/data
+      - /var/lib/workshop/schema.sql:/docker-entrypoint-initdb.d/00-schema.sql:ro
+      - ./db-init.sh:/docker-entrypoint-initdb.d/10-workshop.sh:ro
+    networks: [database]
+    healthcheck:
+      # Check the real TCP listener and completion of both initialization scripts.
+      test:
+        - CMD-SHELL
+        - >-
+          test "$$(PGPASSWORD="$$POSTGRES_PASSWORD" psql -XqAt -h 127.0.0.1 -U postgres -d guacamole
+          -c "SELECT to_regclass('guacamole_connection') IS NOT NULL AND EXISTS
+          (SELECT 1 FROM pg_roles WHERE rolname = 'guacamole')")" = t
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
+
+  guacd:
+    image: guacamole/guacd:1.6.0
+    restart: unless-stopped
+    logging: {driver: local}
+    mem_limit: 1g
+    cpus: 2
+    pids_limit: 128
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    dns: [127.0.0.1]
+    environment:
+      XDG_CACHE_HOME: /tmp
+    healthcheck:
+      test: [CMD, nc, -z, 127.0.0.1, "4822"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      terminal:
+        ipv4_address: 172.31.253.4
+
+  web:
+    image: guacamole/guacamole:1.6.0
+    restart: unless-stopped
+    logging: {driver: local}
+    mem_limit: 1g
+    cpus: 2
+    pids_limit: 192
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    depends_on:
+      db:
+        condition: service_healthy
+      guacd:
+        condition: service_healthy
+    environment:
+      WEBAPP_CONTEXT: ROOT
+      GUACD_HOSTNAME: 172.31.253.4
+      POSTGRESQL_ENABLED: "true"
+      POSTGRESQL_HOSTNAME: db
+      POSTGRESQL_DATABASE: guacamole
+      POSTGRESQL_USERNAME: guacamole
+      POSTGRESQL_PASSWORD: ${POSTGRESQL_PASSWORD:?}
+      API_SESSION_TIMEOUT: "30"
+      BAN_ENABLED: "true"
+      REMOTE_IP_VALVE_ENABLED: "true"
+      PROXY_ALLOWED_IPS_REGEX: '127\.0\.0\.1|172\.31\.253\.1'
+      PROXY_IP_HEADER: CF-Connecting-IP
+      JAVA_OPTS: -Xmx512m
+    healthcheck:
+      test: [CMD, curl, -fsS, -o, /dev/null, "http://127.0.0.1:8080/"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 30s
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks:
+      database: {}
+      terminal:
+        ipv4_address: 172.31.253.3
+
+networks:
+  database:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+    ipam:
+      config:
+        - subnet: 172.31.253.16/28
+  terminal:
+    driver_opts:
+      com.docker.network.bridge.name: wks-guac
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+      # Docker's raw rules must let guest replies reach the workshop firewall.
+      com.docker.network.bridge.trusted_host_interfaces: "wks1:wks2:wks3:wks4"
+    ipam:
+      config:
+        - subnet: 172.31.253.0/28
+
+volumes:
+  database:

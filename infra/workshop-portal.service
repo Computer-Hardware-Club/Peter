@@ -1,0 +1,17 @@
+[Unit]
+Description=Workshop Guacamole portal
+Requires=docker.service workshop-firewall.service
+After=docker.service workshop-firewall.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=10s
+TimeoutStartSec=150s
+WorkingDirectory=/opt/workshop/infra
+ExecStart=/usr/bin/docker compose --env-file /var/lib/workshop/stack.env up -d --wait --wait-timeout 120
+ExecStop=/usr/bin/docker compose --env-file /var/lib/workshop/stack.env stop
+
+[Install]
+WantedBy=multi-user.target

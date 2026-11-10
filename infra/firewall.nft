@@ -1,0 +1,53 @@
+# Reload only our table, in one transaction. Leave every other firewall intact.
+add table inet workshop
+flush table inet workshop
+table inet workshop {
+    set guests {
+        type ifname
+        elements = { "wks1", "wks2", "wks3", "wks4" }
+    }
+
+    set guest_endpoints {
+        type ifname . ipv4_addr
+        elements = {
+            "wks1" . 10.241.1.2, "wks2" . 10.241.2.2,
+            "wks3" . 10.241.3.2, "wks4" . 10.241.4.2
+        }
+    }
+
+    chain input {
+        type filter hook input priority -10; policy accept;
+        iifname @guests counter drop
+        iifname "wks-guac" ip saddr 172.31.253.3 tcp sport 8080 ct direction reply ct state established accept
+        iifname "wks-guac" counter drop
+    }
+
+    chain output {
+        type filter hook output priority -10; policy accept;
+        oifname @guests counter drop
+    }
+
+    chain forward {
+        type filter hook forward priority -10; policy accept;
+        iifname "wks-guac" oifname "wks-guac" accept
+        iifname "wks-guac" ip saddr 172.31.253.4 oifname . ip daddr @guest_endpoints tcp dport 22 ct direction original ct state { new, established } counter accept
+        iifname . ip saddr @guest_endpoints oifname "wks-guac" ip daddr 172.31.253.4 tcp sport 22 ct direction reply ct state established counter accept
+        iifname @guests counter drop
+        oifname @guests counter drop
+        iifname "wks-guac" counter drop
+        oifname "wks-guac" counter drop
+    }
+}
+
+# Limit direct layer-2 traffic on the terminal bridge to the Guacamole protocol.
+add table bridge workshop
+flush table bridge workshop
+table bridge workshop {
+    chain forward {
+        type filter hook forward priority -200; policy accept;
+        meta ibrname "wks-guac" ether type arp accept
+        meta ibrname "wks-guac" ip saddr 172.31.253.3 ip daddr 172.31.253.4 tcp dport 4822 accept
+        meta ibrname "wks-guac" ip saddr 172.31.253.4 ip daddr 172.31.253.3 tcp sport 4822 accept
+        meta ibrname "wks-guac" counter drop
+    }
+}
