@@ -12,9 +12,9 @@ sudo workshop status
 sudo workshop credentials --team 1
 ```
 
-Repeat the credentials command for each team. Send each login privately to the corresponding team. Once the administrator has configured Cloudflare, participants use [workshop.computerhardwareclub.org](https://workshop.computerhardwareclub.org/) and sign in to Cloudflare Access, then to Guacamole. They select their team’s SSH connection if Guacamole shows the connection list.
+Repeat the credentials command for each team and share the login privately with that team. Participants open [workshop.computerhardwareclub.org](https://workshop.computerhardwareclub.org/), enter the one-time code sent to their `@oregonstate.edu` email, and sign in to Guacamole with the team credentials. They select their team’s SSH connection if Guacamole shows the connection list.
 
-Before Cloudflare is configured, officers can forward the loopback portal over their existing SSH connection and open [the local portal](http://127.0.0.1:18080/).
+Officers can also forward the loopback portal over their existing SSH connection and open [the local portal](http://127.0.0.1:18080/).
 
 ```sh
 ssh -N -L 127.0.0.1:18080:127.0.0.1:8080 192.168.1.12
@@ -30,5 +30,5 @@ sudo workshop destroy --yes
 Reset replaces the selected VM from the event’s pinned image, drops its live terminal sessions, and rotates its portal password and SSH keys. Destroy revokes all event logins and removes the team VMs, guest disks, bridges, saved credentials, and event database history. The image catalog, database service, firewall, and portal stay available between workshops.
 
 - [Operations, templates, and recovery](docs/operations.md)
-- [Cloudflare administrator handoff](docs/cloudflare.md)
+- [Cloudflare configuration and recovery](docs/cloudflare.md)
 - [Peter audit and acceptance checks](docs/verification.md)

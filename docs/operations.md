@@ -58,7 +58,7 @@ df -h /var/lib/incus
 
 - A pending team indicates interrupted provisioning. Fix the service or VM problem and run `reset --team N --yes`, or destroy and redeploy. The CLI serializes event mutations and checks Incus ownership before removing a resource. If the event state was lost and a reserved resource remains, verify its `user.workshop.run` marker and name in Incus before removing it manually. Review the database connection and login records before removing an orphan.
 - For an SSH host key mismatch, reset the team from the pinned image. The portal pins each new VM’s Ed25519 host key before granting access.
-- Test HTTP on Peter using `curl -fsS http://127.0.0.1:8080/ -o /dev/null`. If this works and the public hostname fails, check `sudo journalctl -u workshop-tunnel -b`, Cloudflare connector health, and the hostname route and Access settings.
+- Test HTTP on Peter using `curl -fsS http://127.0.0.1:8080/ -o /dev/null`. If this works and the public hostname fails, check `sudo journalctl -u cloudflared.service -b`, Cloudflare connector health, and the hostname route and Access settings.
 - Use `sudo systemctl reload workshop-firewall` to apply changes atomically to the workshop tables. Keep general firewall managers from flushing the full nftables ruleset while VMs are running.
 - If the database initialization fails on a new host, inspect `sudo docker logs workshop-db-1`. Its health check requires the schema and the application role. Treat any existing volume as persistent data and preserve it before repair.
 - A host reboot interrupts browser sessions. Participants can reconnect with the same team credentials after the portal and guests recover.

@@ -34,7 +34,11 @@ Used a disposable four-team event on Peter and Chrome through the loopback SSH f
 | Teardown | Ran destroy twice. Verified zero team VMs, disks, bridges, event state, portal users, or connections. Reusable images and healthy infrastructure services remained. |
 | Installer and configuration | Re-ran `install.sh` successfully. Validated Python compilation, shell syntax, Docker Compose configuration, systemd unit syntax, and nftables syntax. Verified root-only runtime secrets and a noninteractive CLI subprocess regression check. |
 
-Cloudflare connector authentication, DNS, Access policy, and public-hostname testing are pending administrator setup.
+The original local acceptance tests ran before Cloudflare publication.
+
+## Public hostname
+
+On November 11, Cloudflare published `workshop.computerhardwareclub.org` through the healthy `peter-workshop` tunnel. Public DNS resolved, and Peter's enabled `cloudflared.service` received the route to `http://127.0.0.1:8080` with Access token validation. Unauthenticated HTTPS requests to the portal, login API, and WebSocket endpoint each redirected to Cloudflare Access. The Access page offered an email code, and the application's policy allows `@oregonstate.edu` addresses. An authenticated terminal through the public hostname remains to be verified with an OSU mailbox.
 
 ## One-terminal limit
 
