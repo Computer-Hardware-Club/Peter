@@ -39,6 +39,8 @@ services:
     pids_limit: 128
     read_only: true
     tmpfs: [/tmp]
+    volumes:
+      - recordings:/recordings
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     dns: [127.0.0.1]
@@ -114,3 +116,10 @@ networks:
 
 volumes:
   database:
+  recordings:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      # guacd 1.6.0 runs as UID/GID 1000. Limit all retained transcripts to 64 MiB.
+      o: size=64m,uid=1000,gid=1000,mode=0700,nosuid,nodev,noexec

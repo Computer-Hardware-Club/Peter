@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Workshop admin · Computer Hardware Club</title>
+  <link rel="stylesheet" href="/style.css">
+  <script defer src="/app.js"></script>
+</head>
+<body>
+  <header class="masthead">
+    <div class="shell masthead-inner">
+      <a class="brand" href="/" aria-label="Computer Hardware Club workshop admin">
+        <span class="brand-mark" aria-hidden="true">&gt;_</span>
+        <span>Computer Hardware Club</span>
+      </a>
+      <div class="masthead-actions">
+        <span class="local-label">Peter <span class="local-divider" aria-hidden="true">/</span> Admin</span>
+        <button class="button quiet" id="logout" type="button" hidden>Sign out</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section id="loading" class="panel centered" aria-live="polite">
+      <p>Connecting to Peter…</p>
+    </section>
+
+    <section id="signin" class="panel centered signin" hidden>
+      <h1>Workshop admin</h1>
+      <p class="muted">Enter the dashboard password to manage workshops on Peter.</p>
+      <form id="login-form">
+        <label for="dashboard-password">Dashboard password</label>
+        <input id="dashboard-password" name="password" type="password" autocomplete="current-password" required>
+        <button class="button primary" type="submit">Sign in</button>
+        <p id="login-error" class="form-error" role="alert" hidden></p>
+      </form>
+    </section>
+
+    <div id="dashboard" hidden>
+      <section class="page-heading">
+        <div>
+          <p class="eyebrow">Administrator dashboard</p>
+          <h1 id="workshop-title">Workshops</h1>
+          <p id="workshop-summary" class="muted"></p>
+        </div>
+        <a class="button secondary" id="portal-link" target="_blank" rel="noopener noreferrer">Participant portal <span aria-hidden="true">↗</span></a>
+      </section>
+
+      <div id="job-banner" class="notice" role="status" hidden>
+        <span id="job-indicator" class="indicator" aria-hidden="true"></span>
+        <span id="job-message"></span>
+      </div>
+
+      <section class="panel start-panel" id="workshop-start" aria-labelledby="start-heading" hidden>
+        <div>
+          <h2 id="start-heading">Start a workshop</h2>
+          <p class="muted">Choose an image and a starting team count. Add or remove teams as people arrive.</p>
+        </div>
+        <form id="deploy-form">
+          <label for="workshop-name">Workshop name</label>
+          <input id="workshop-name" name="name" value="workshop" required pattern="[a-z][a-z0-9\-]{0,23}" maxlength="24" spellcheck="false" aria-describedby="workshop-name-hint">
+          <small id="workshop-name-hint">Up to 24 lowercase letters, digits, and hyphens. Start with a letter.</small>
+          <div class="deploy-options">
+            <div>
+              <label for="template">VM template</label>
+              <select id="template" name="template" required></select>
+            </div>
+            <div>
+              <label for="team-count">Teams</label>
+              <select id="team-count" name="teams" required>
+                <option value="1" selected>1 team</option>
+                <option value="2">2 teams</option>
+                <option value="3">3 teams</option>
+                <option value="4">4 teams</option>
+              </select>
+            </div>
+          </div>
+          <p id="template-description" class="muted template-description"></p>
+          <button class="button primary" type="submit" data-action-control>Start workshop</button>
+        </form>
+      </section>
+
+      <div id="active-workshop" hidden>
+        <div class="workspace">
+          <section class="panel roster" aria-labelledby="roster-title">
+            <div class="panel-heading">
+              <div>
+                <h2 id="roster-title">Teams</h2>
+                <p class="muted" id="roster-summary"></p>
+              </div>
+              <button id="add-team" class="button secondary compact" type="button" data-action-control>+ Add team</button>
+            </div>
+            <div id="team-list" class="team-list"></div>
+          </section>
+
+          <section class="panel team-detail" id="team-detail" aria-labelledby="team-title" hidden>
+            <div class="panel-heading">
+              <div>
+                <div class="detail-title">
+                  <h2 id="team-title"></h2>
+                  <span class="pill" id="team-status"></span>
+                </div>
+                <p id="team-subtitle" class="muted"></p>
+              </div>
+              <div class="team-actions">
+                <button class="button secondary compact" type="button" id="open-credentials">Credentials &amp; invite</button>
+                <button class="button secondary compact" type="button" id="reset-team" data-action-control>Reset VM</button>
+              </div>
+            </div>
+            <div class="terminal">
+              <div class="terminal-heading">
+                <h3>Terminal output</h3>
+                <span id="terminal-status" class="terminal-status"><span class="indicator" aria-hidden="true"></span><span></span></span>
+              </div>
+              <div class="terminal-scroll" id="terminal-scroll" tabindex="0" aria-label="Team terminal transcript">
+                <pre id="terminal-output"></pre>
+              </div>
+              <p id="recording-warning" class="recording-warning" hidden>Recording storage is nearly full. Terminal output may stop being captured.</p>
+            </div>
+            <div class="detail-footer">
+              <p class="muted">Terminal output is recorded for troubleshooting and may include commands and their results.</p>
+              <button id="remove-team" class="button quiet danger-text" type="button" data-action-control>Remove team</button>
+            </div>
+          </section>
+        </div>
+        <div class="workshop-footer">
+          <button id="end-workshop" class="button quiet danger-text" type="button" data-action-control>End workshop</button>
+        </div>
+      </div>
+
+      <p class="toast" id="message" role="status" hidden></p>
+    </div>
+  </main>
+
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-copy">
+    <form method="dialog" class="dialog-body">
+      <h2 id="confirm-title"></h2>
+      <p id="confirm-copy" class="muted"></p>
+      <div class="dialog-actions">
+        <button class="button secondary" value="cancel" autofocus>Cancel</button>
+        <button class="button danger" id="confirm-submit" value="confirm"></button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="credentials-dialog" aria-labelledby="credentials-title">
+    <div class="dialog-body">
+      <div class="dialog-heading">
+        <h2 id="credentials-title"></h2>
+        <form method="dialog">
+          <button class="button quiet close-button" aria-label="Close credentials" type="submit" autofocus>×</button>
+        </form>
+      </div>
+      <p id="credentials-message" class="muted" role="status"></p>
+      <div id="credentials-content" hidden>
+        <dl class="credential-list">
+          <dt>Username</dt><dd id="team-username"></dd>
+          <dt>Password</dt><dd id="team-password"></dd>
+        </dl>
+        <button class="button secondary compact" id="copy-credentials" type="button">Copy credentials</button>
+
+        <form id="invite-form">
+          <h3>Invite a participant</h3>
+          <label for="invite-email">Email address</label>
+          <input id="invite-email" type="email" name="email" maxlength="254" placeholder="student@oregonstate.edu" required>
+          <p class="muted invite-note" id="invite-note"></p>
+          <div class="invite-actions">
+            <button class="button primary" id="send-invite" type="button">Send invite</button>
+            <button class="button secondary" id="draft-invite" type="button">Open email draft</button>
+          </div>
+          <p id="invite-result" class="form-error" role="status" hidden></p>
+        </form>
+      </div>
+    </div>
+  </dialog>
+</body>
+</html>

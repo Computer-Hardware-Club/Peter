@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Manage one event of two to four isolated Incus workshop VMs."""
+"""Manage one event of up to four isolated Incus workshop VMs."""
 
 import argparse
 import fcntl
@@ -24,6 +24,8 @@ POOL_DIR = Path("/var/lib/incus/storage-pools/workshop")
 PORTAL = "https://workshop.computerhardwareclub.org/"
 GUACD_IP = "172.31.253.4"
 OWNER_KEY = "user.workshop.run"
+TEAM_SLOTS = range(1, 5)
+SESSION_NOTICE = "Workshop officers can view and temporarily retain terminal output for troubleshooting.\n"
 SLUG = re.compile(r"[a-z][a-z0-9-]{0,23}")
 FINGERPRINT = re.compile(r"[0-9a-f]{64}")
 
@@ -97,6 +99,18 @@ def identity(slot):
     return f"ws-team-{slot}", f"wks{slot}", f"10.241.{slot}.2", f"10.241.{slot}.1"
 
 
+def team_slots(event):
+    return {slot: team for slot, team in enumerate(event["teams"], 1) if team is not None}
+
+
+def new_team(event, slot):
+    return {
+        "login": f"{event['name']}-{event['run'][:8]}-team-{slot}-{secrets.token_hex(4)}",
+        "password": secrets.token_urlsafe(24),
+        "ready": False,
+    }
+
+
 def require_owner(resource, name, event):
     if resource and (resource.get("config") or {}).get(OWNER_KEY) != event["run"]:
         raise RuntimeError(f"Refusing to modify {name}: ownership does not match this event.")
@@ -146,11 +160,27 @@ def create_guest(slot, event, public_key):
             "sudo": ["ALL=(ALL) NOPASSWD:ALL"], "lock_passwd": True,
             "ssh_authorized_keys": [f'from="{GUACD_IP}" {public_key}'],
         }],
-        "write_files": [{
-            "path": "/etc/ssh/sshd_config.d/00-workshop.conf",
-            "permissions": "0644",
-            "content": "AllowUsers student\nPermitRootLogin no\nDisableForwarding yes\n",
-        }],
+        "write_files": [
+            {
+                "path": "/etc/ssh/sshd_config.d/00-workshop.conf",
+                "permissions": "0644",
+                "content": "AllowUsers student\nPermitRootLogin no\nDisableForwarding yes\n"
+                           "Banner /etc/workshop-session-notice\n",
+            },
+            {
+                "path": "/etc/workshop-session-notice",
+                "permissions": "0644",
+                "content": SESSION_NOTICE,
+            },
+            {
+                # Display the notice in Guacamole even when it omits SSH auth banners.
+                "path": "/etc/profile.d/workshop-notice.sh",
+                "permissions": "0644",
+                "content": 'case "$-" in\n'
+                           '    *i*) [ "${USER:-}" != student ] || cat /etc/workshop-session-notice ;;\n'
+                           'esac\n',
+            },
+        ],
         "runcmd": [["systemctl", "restart", "ssh.service"]],
     }
     incus(
@@ -196,6 +226,7 @@ def grant_access(slot, team, ssh_key, host_key):
         "hostname": address, "port": "22", "username": "student",
         "private-key": ssh_key, "host-key": host_key, "enable-sftp": "false",
         "server-alive-interval": "30",
+        "typescript-path": "/recordings", "typescript-name": team["login"],
     }
     values = ", ".join(f"({literal(k)}, {literal(v)})" for k, v in params.items())
     db(f"""
@@ -234,7 +265,9 @@ def provision(event, slots):
         for slot in slots:
             name, bridge, _, _ = identity(slot)
             print(f"Starting {name}", flush=True)
-            if bridge not in networks():
+            existing_bridge = networks().get(bridge)
+            require_owner(existing_bridge, bridge, event)
+            if not existing_bridge:
                 create_bridge(slot, event)
             key = str(Path(tmp) / str(slot))
             run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", key)
@@ -248,9 +281,18 @@ def provision(event, slots):
             print(f"{identity(slot)[0]} is ready", flush=True)
 
 
+def check_available(slots):
+    check_host(len(slots))
+    existing_guests, existing_networks = guests(), networks()
+    for slot in slots:
+        name, bridge, _, _ = identity(slot)
+        if name in existing_guests or bridge in existing_networks:
+            raise RuntimeError(f"Reserved name {name} or {bridge} is already in use.")
+
+
 def deploy(args):
     if load_event():
-        raise RuntimeError("An event already exists. Use status, reset, or destroy.")
+        raise RuntimeError("An event already exists. Use add, status, reset, or destroy.")
     if not SLUG.fullmatch(args.name) or not SLUG.fullmatch(args.template):
         raise RuntimeError("Event and template names must be lowercase slugs of up to 24 characters.")
     template_path = HOME_DIR / "templates" / f"{args.template}.json"
@@ -264,23 +306,26 @@ def deploy(args):
     ), "")
     if not FINGERPRINT.fullmatch(image):
         raise RuntimeError("The template image alias must point to a local virtual-machine image.")
-    check_host(args.teams)
-    existing_guests = guests()
-    existing_networks = networks()
-    for slot in range(1, args.teams + 1):
-        name, bridge, _, _ = identity(slot)
-        if name in existing_guests or bridge in existing_networks:
-            raise RuntimeError(f"Reserved name {name} or {bridge} is already in use.")
-    event_id = secrets.token_hex(8)
+    slots = range(1, args.teams + 1)
+    check_available(slots)
     event = {
-        "name": args.name, "run": event_id, "template": args.template, "image": image,
-        "teams": [
-            {"login": f"{args.name}-{event_id[:8]}-team-{slot}",
-             "password": secrets.token_urlsafe(24), "ready": False}
-            for slot in range(1, args.teams + 1)
-        ],
+        "name": args.name, "run": secrets.token_hex(8), "template": args.template, "image": image,
     }
-    provision(event, range(1, args.teams + 1))
+    event["teams"] = [new_team(event, slot) for slot in slots]
+    provision(event, slots)
+
+
+def add_team(event):
+    current = team_slots(event)
+    slot = next((slot for slot in TEAM_SLOTS if slot not in current), None)
+    if slot is None:
+        raise RuntimeError("This event already has four teams.")
+    check_available([slot])
+    if slot > len(event["teams"]):
+        event["teams"].append(new_team(event, slot))
+    else:
+        event["teams"][slot - 1] = new_team(event, slot)
+    provision(event, [slot])
 
 
 def remove_guest(slot, event, current):
@@ -291,17 +336,27 @@ def remove_guest(slot, event, current):
         incus("delete", name, "--force")
 
 
-def reset(event, slot):
-    slots = [slot] if slot else list(range(1, len(event["teams"]) + 1))
-    check_host(len(slots))
+def owned_resources(event, slots):
     current, bridges = guests(), networks()
-    for number in slots:
-        name, bridge, _, _ = identity(number)
+    for slot in slots:
+        name, bridge, _, _ = identity(slot)
         require_owner(current.get(name), name, event)
         require_owner(bridges.get(bridge), bridge, event)
-    teams = [event["teams"][number - 1] for number in slots]
+    return current, bridges
+
+
+def reset(event, slot, keep_password=False):
+    active = team_slots(event)
+    slots = [slot] if slot else list(active)
+    if not slots:
+        raise RuntimeError("There are no teams to reset. Add a team first.")
+    check_host(len(slots))
+    current, _ = owned_resources(event, slots)
+    teams = [active[number] for number in slots]
     for team in teams:
-        team.update(password=secrets.token_urlsafe(24), ready=False)
+        team["ready"] = False
+        if not keep_password:
+            team["password"] = secrets.token_urlsafe(24)
     save(event)
     revoke_access(teams)
     for number in slots:
@@ -309,29 +364,48 @@ def reset(event, slot):
     provision(event, slots)
 
 
-def destroy(event):
-    current, bridges = guests(), networks()
-    slots = range(1, len(event["teams"]) + 1)
-    for slot in slots:
-        name, bridge, _, _ = identity(slot)
-        require_owner(current.get(name), name, event)
-        require_owner(bridges.get(bridge), bridge, event)
-    for team in event["teams"]:
+def remove_teams(event, slots):
+    if not slots:
+        return
+    current, bridges = owned_resources(event, slots)
+    teams = [event["teams"][slot - 1] for slot in slots]
+    for team in teams:
         team["ready"] = False
     save(event)
-    revoke_access(event["teams"])
+    revoke_access(teams)
     for slot in slots:
         _, bridge, _, _ = identity(slot)
         remove_guest(slot, event, current)
         if bridge in bridges:
             incus("network", "delete", bridge, project="default")
-    names = ", ".join(literal(team["login"]) for team in event["teams"])
+    names = ", ".join(literal(team["login"]) for team in teams)
     db(f"""
 BEGIN;
 DELETE FROM guacamole_user_history WHERE username IN ({names});
 DELETE FROM guacamole_connection_history WHERE username IN ({names}) OR connection_name IN ({names});
 COMMIT;
 """)
+    clear_recordings(teams)
+    for slot in slots:
+        event["teams"][slot - 1] = None
+    save(event)
+
+
+def clear_recordings(teams):
+    try:
+        mountpoint = run("docker", "volume", "inspect", "--format", "{{.Mountpoint}}",
+                         "workshop_recordings", timeout=10)
+    except subprocess.CalledProcessError:
+        return  # An older installation may not have the recording volume yet.
+    logins = "|".join(re.escape(team["login"]) for team in teams)
+    filenames = re.compile(rf"(?:{logins})(?:\.\d+)?(?:\.timing)?")
+    for entry in Path(mountpoint).iterdir():
+        if filenames.fullmatch(entry.name):
+            entry.unlink(missing_ok=True)
+
+
+def destroy(event):
+    remove_teams(event, list(team_slots(event)))
     STATE_FILE.unlink()
     sync_state_directory()
     print("Workshop event destroyed.")
@@ -348,7 +422,7 @@ def status(event):
         return
     print(f"{event['name']} | {event['template']} | image {event['image'][:12]}")
     current = guests()
-    for slot, team in enumerate(event["teams"], 1):
+    for slot, team in team_slots(event).items():
         name, _, address, _ = identity(slot)
         state = current.get(name, {}).get("status", "Missing")
         access = "ready" if team["ready"] else "pending"
@@ -360,16 +434,25 @@ def main():
     commands = parser.add_subparsers(dest="action", required=True)
     new = commands.add_parser("deploy")
     new.add_argument("name")
-    new.add_argument("--template", default="ubuntu-basics")
-    new.add_argument("--teams", type=int, choices=range(2, 5), required=True)
+    new.add_argument("--template", default="test-vm")
+    new.add_argument("--teams", type=int, choices=TEAM_SLOTS, required=True)
+    commands.add_parser("add").add_argument("--expect-run", help=argparse.SUPPRESS)
+    removal = commands.add_parser("remove")
+    removal.add_argument("--team", type=int, choices=TEAM_SLOTS, required=True)
+    removal.add_argument("--yes", action="store_true", required=True)
+    removal.add_argument("--expect-login", help=argparse.SUPPRESS)
     commands.add_parser("status", aliases=["list"])
-    commands.add_parser("destroy").add_argument("--yes", action="store_true", required=True)
+    teardown = commands.add_parser("destroy")
+    teardown.add_argument("--yes", action="store_true", required=True)
+    teardown.add_argument("--expect-run", help=argparse.SUPPRESS)
     replacement = commands.add_parser("reset")
     selection = replacement.add_mutually_exclusive_group(required=True)
-    selection.add_argument("--team", type=int, choices=range(1, 5))
+    selection.add_argument("--team", type=int, choices=TEAM_SLOTS)
     selection.add_argument("--all", action="store_true")
     replacement.add_argument("--yes", action="store_true", required=True)
-    commands.add_parser("credentials").add_argument("--team", type=int, choices=range(1, 5),
+    replacement.add_argument("--keep-password", action="store_true")
+    replacement.add_argument("--expect-login", help=argparse.SUPPRESS)
+    commands.add_parser("credentials").add_argument("--team", type=int, choices=TEAM_SLOTS,
                                                     required=True)
     args = parser.parse_args()
     if os.geteuid() != 0:
@@ -381,6 +464,14 @@ def main():
     with (STATE_DIR / "lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         event = load_event()
+        expected_run = getattr(args, "expect_run", None)
+        if expected_run is not None and (not event or event["run"] != expected_run):
+            raise RuntimeError("The workshop changed. Refresh the dashboard and try again.")
+        expected_login = getattr(args, "expect_login", None)
+        if expected_login is not None:
+            team = team_slots(event).get(args.team) if event else None
+            if not team or team["login"] != expected_login:
+                raise RuntimeError("That team changed. Refresh the dashboard and try again.")
         if args.action == "deploy":
             deploy(args)
         elif not event:
@@ -388,10 +479,15 @@ def main():
                 print("No workshop event.")
             else:
                 raise RuntimeError("No workshop event.")
-        elif getattr(args, "team", None) and args.team > len(event["teams"]):
+        elif getattr(args, "team", None) and args.team not in team_slots(event):
             raise RuntimeError("That team does not exist in this event.")
+        elif args.action == "add":
+            add_team(event)
+        elif args.action == "remove":
+            remove_teams(event, [args.team])
+            print(f"Team {args.team} removed.")
         elif args.action == "reset":
-            reset(event, args.team)
+            reset(event, args.team, args.keep_password)
         elif args.action == "destroy":
             destroy(event)
         else:

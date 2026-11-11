@@ -43,3 +43,7 @@ On November 11, Cloudflare published `workshop.computerhardwareclub.org` through
 ## One-terminal limit
 
 On November 11, a disposable two-team event admitted the first Team 1 Guacamole WebSocket, rejected a second Team 1 connection, and admitted Team 2 concurrently. Closing Team 1's first terminal freed its slot for a new connection.
+
+## Officer dashboard and Debian
+
+On November 11, tested the deployed dashboard on Peter over LAN TLS and through the SSH forward. Verified officer authentication, cross-origin and CSRF rejection, and the desktop and mobile layouts in Chrome. Launched Debian 13 from `test-vm`, opened a Guacamole terminal, and saw a command and its output in the dashboard before disconnecting. Added and removed a second team while the first stayed connected. A stale team selection was rejected. Reset the first VM, verified its boot ID changed, reconnected using the same credentials, and confirmed the previous transcript remained available. A disposable guest with a default route could not reach the dashboard. Ending the event removed the test VMs, logins, and recordings. SMTP construction and TLS submission were checked with a test client. Peter has no production SMTP configuration.

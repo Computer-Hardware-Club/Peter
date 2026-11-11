@@ -1,0 +1,14 @@
+[Unit]
+Description=Private socket for workshop administration commands
+
+[Socket]
+ListenStream=/run/workshop-dashboard-host.sock
+SocketUser=root
+SocketGroup=workshop-dashboard
+SocketMode=0660
+RemoveOnStop=yes
+Accept=yes
+MaxConnections=40
+
+[Install]
+WantedBy=sockets.target

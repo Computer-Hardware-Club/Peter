@@ -29,6 +29,7 @@ if [[ $(pwd -P) != /opt/workshop ]]; then
     install -m 0644 README.md /opt/workshop/
     install -m 0644 docs/*.md /opt/workshop/docs/
 fi
+rm -f /opt/workshop/templates/ubuntu-basics.json
 ln -sfn /opt/workshop/workshop /usr/local/sbin/workshop
 
 nft -c -f /opt/workshop/infra/firewall.nft
@@ -58,11 +59,11 @@ if ! incus --project workshop profile show workshop-vm >/dev/null 2>&1; then
 fi
 incus --project workshop profile set workshop-vm limits.cpu=2 limits.memory=2GiB \
     boot.autostart=true limits.disk.priority=2 security.guestapi=false security.agent.metrics=false
-if ! incus --project workshop image info ubuntu-noble-base >/dev/null 2>&1; then
-    incus image copy images:ubuntu/24.04/cloud local: --vm --project workshop --alias ubuntu-noble-base
+if ! incus --project workshop image info debian-trixie-base >/dev/null 2>&1; then
+    incus image copy images:debian/13/cloud local: --vm --project workshop --alias debian-trixie-base
 fi
-if ! incus --project workshop image info ubuntu-noble >/dev/null 2>&1; then
-    /opt/workshop/build-template.sh ubuntu-noble
+if ! incus --project workshop image info debian-trixie >/dev/null 2>&1; then
+    /opt/workshop/build-template.sh debian-trixie
 fi
 
 if [[ ! -s /var/lib/workshop/stack.env ]]; then

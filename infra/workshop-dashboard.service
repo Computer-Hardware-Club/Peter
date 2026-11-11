@@ -1,0 +1,28 @@
+[Unit]
+Description=Computer Hardware Club workshop dashboard
+Wants=network-online.target
+Requires=workshop-dashboard-host.socket
+After=network-online.target workshop-dashboard-host.socket
+
+[Service]
+User=workshop-dashboard
+Group=workshop-dashboard
+EnvironmentFile=/etc/workshop/dashboard/listen.env
+LoadCredential=officer-password:/etc/workshop/dashboard/officer-password
+LoadCredential=smtp.json:/etc/workshop/dashboard/smtp.json
+LoadCredential=tls.crt:/etc/workshop/dashboard/tls.crt
+LoadCredential=tls.key:/etc/workshop/dashboard/tls.key
+ExecStart=/usr/bin/python3 /opt/workshop/dashboard/server.py $DASHBOARD_LAN_ARGS
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

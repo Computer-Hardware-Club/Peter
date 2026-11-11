@@ -1,0 +1,10 @@
+[Unit]
+Description=Workshop administration command
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/workshop/dashboard/host.py
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+RuntimeMaxSec=1220
+UMask=0077
