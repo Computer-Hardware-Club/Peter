@@ -205,7 +205,7 @@ INSERT INTO guacamole_user (entity_id, password_hash, password_salt, password_da
 SELECT entity_id, decode('{digest}', 'hex'), decode('{salt.hex()}', 'hex'), now()
 FROM guacamole_entity WHERE name = {username} AND type = 'USER';
 INSERT INTO guacamole_connection (connection_name, protocol, max_connections, max_connections_per_user)
-VALUES ({username}, 'ssh', 6, 6);
+VALUES ({username}, 'ssh', 1, 1);
 INSERT INTO guacamole_connection_parameter (connection_id, parameter_name, parameter_value)
 SELECT connection_id, parameter_name, parameter_value
 FROM guacamole_connection CROSS JOIN (VALUES {values}) AS p(parameter_name, parameter_value)

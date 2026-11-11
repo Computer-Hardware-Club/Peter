@@ -35,3 +35,7 @@ Used a disposable four-team event on Peter and Chrome through the loopback SSH f
 | Installer and configuration | Re-ran `install.sh` successfully. Validated Python compilation, shell syntax, Docker Compose configuration, systemd unit syntax, and nftables syntax. Verified root-only runtime secrets and a noninteractive CLI subprocess regression check. |
 
 Cloudflare connector authentication, DNS, Access policy, and public-hostname testing are pending administrator setup.
+
+## One-terminal limit
+
+On November 11, a disposable two-team event admitted the first Team 1 Guacamole WebSocket, rejected a second Team 1 connection, and admitted Team 2 concurrently. Closing Team 1's first terminal freed its slot for a new connection.

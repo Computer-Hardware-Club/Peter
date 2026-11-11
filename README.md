@@ -1,6 +1,6 @@
 # Computer Hardware Club workshop platform
 
-Peter runs a single workshop at a time with two to four Ubuntu 24.04 LTS KVM virtual machines. Each team gets its own VM and Guacamole login. Team members can open up to six independent browser terminals with the shared team login. Inside the guest, `student` can run `sudo` without a password.
+Peter runs a single workshop at a time with two to four Ubuntu 24.04 LTS KVM virtual machines. Each team gets its own VM and Guacamole login. The VM accepts one active browser terminal at a time. Inside the guest, `student` can run `sudo` without a password.
 
 ## Officer quick start
 
