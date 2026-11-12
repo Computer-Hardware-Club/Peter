@@ -2,6 +2,7 @@
 """Manage one event of up to four isolated Incus workshop VMs."""
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import fcntl
 import hashlib
 import json
@@ -25,7 +26,14 @@ PORTAL = "https://workshop.computerhardwareclub.org/"
 GUACD_IP = "172.31.253.4"
 OWNER_KEY = "user.workshop.run"
 TEAM_SLOTS = range(1, 5)
-SESSION_NOTICE = "Workshop officers can view and temporarily retain terminal output for troubleshooting.\n"
+TERMINAL_PALETTE = (
+    "background:rgb:10/12/16;foreground:rgb:f2/f2/ee;"
+    "color0:rgb:19/1c/23;color1:rgb:f7/76/7e;color2:rgb:9e/ce/6a;"
+    "color3:rgb:ff/9e/64;color4:rgb:7a/a2/f7;color5:rgb:bb/9a/f7;"
+    "color6:rgb:7d/cf/da;color7:rgb:c8/d0/e0;color8:rgb:72/7b/8f;"
+    "color9:rgb:ff/90/96;color10:rgb:b8/e3/88;color11:rgb:ff/b9/81;"
+    "color12:rgb:a1/bb/ff;color13:rgb:d5/b5/ff;color14:rgb:a1/e9/f3;color15:rgb:f2/f2/ee"
+)
 SLUG = re.compile(r"[a-z][a-z0-9-]{0,23}")
 FINGERPRINT = re.compile(r"[0-9a-f]{64}")
 
@@ -106,6 +114,7 @@ def team_slots(event):
 def new_team(event, slot):
     return {
         "login": f"{event['name']}-{event['run'][:8]}-team-{slot}-{secrets.token_hex(4)}",
+        "portal_login": str(slot),
         "password": secrets.token_urlsafe(24),
         "ready": False,
     }
@@ -140,6 +149,7 @@ def create_bridge(slot, event):
 
 def create_guest(slot, event, public_key):
     name, bridge, address, gateway = identity(slot)
+    user = f"team-{slot}"
     mac = f"02:77:6b:73:00:{slot:02x}"
     # Use a single narrow return route for SSH and no default gateway or DNS.
     network = {
@@ -151,12 +161,15 @@ def create_guest(slot, event, public_key):
         }},
     }
     user_data = {
+        "hostname": "peter",
+        "preserve_hostname": False,
+        "manage_etc_hosts": True,
         "disable_root": True,
         "ssh_pwauth": False,
         "ssh_deletekeys": True,
         "ssh_genkeytypes": ["ed25519"],
         "users": [{
-            "name": "student", "shell": "/bin/bash", "groups": ["sudo"],
+            "name": user, "shell": "/bin/bash", "groups": ["sudo"],
             "sudo": ["ALL=(ALL) NOPASSWD:ALL"], "lock_passwd": True,
             "ssh_authorized_keys": [f'from="{GUACD_IP}" {public_key}'],
         }],
@@ -164,21 +177,19 @@ def create_guest(slot, event, public_key):
             {
                 "path": "/etc/ssh/sshd_config.d/00-workshop.conf",
                 "permissions": "0644",
-                "content": "AllowUsers student\nPermitRootLogin no\nDisableForwarding yes\n"
-                           "Banner /etc/workshop-session-notice\n",
+                "content": f"AllowUsers {user}\nPermitRootLogin no\nDisableForwarding yes\n"
+                           "HostKey /etc/ssh/ssh_host_ed25519_key\nHostKeyAlgorithms ssh-ed25519\n"
+                           "PrintMotd no\nPrintLastLog no\n",
             },
             {
-                "path": "/etc/workshop-session-notice",
-                "permissions": "0644",
-                "content": SESSION_NOTICE,
+                "path": "/usr/local/bin/chcfetch",
+                "permissions": "0755",
+                "content": (HOME_DIR / "guest" / "chcfetch").read_text(),
             },
             {
-                # Display the notice in Guacamole even when it omits SSH auth banners.
-                "path": "/etc/profile.d/workshop-notice.sh",
+                "path": "/etc/profile.d/workshop-login.sh",
                 "permissions": "0644",
-                "content": 'case "$-" in\n'
-                           '    *i*) [ "${USER:-}" != student ] || cat /etc/workshop-session-notice ;;\n'
-                           'esac\n',
+                "content": (HOME_DIR / "guest" / "workshop-login.sh").read_text(),
             },
         ],
         "runcmd": [["systemctl", "restart", "ssh.service"]],
@@ -199,36 +210,79 @@ def wait_for_ssh(slot):
     deadline = time.monotonic() + 180
     while time.monotonic() < deadline:
         try:
-            key = incus(
+            output = incus(
                 "exec", name, "--", "bash", "-ec",
                 "test -f /var/lib/cloud/instance/boot-finished; "
-                "sudo -n -u student sudo -n true; "
-                "cat /etc/ssh/ssh_host_ed25519_key.pub",
+                f"sudo -n -u team-{slot} sudo -n true; "
+                "test \"$(sshd -T | awk '/^hostkeyalgorithms / {print $2}')\" = ssh-ed25519; "
+                "ssh-keyscan -T 2 -t ed25519 127.0.0.1 2>/dev/null",
                 timeout=8,
-            ).split()
-            if len(key) >= 2 and key[0] == "ssh-ed25519":
+            )
+            keys = [line.split()[1:] for line in output.splitlines() if not line.startswith("#")]
+            if len(keys) == 1 and len(keys[0]) == 2 and keys[0][0] == "ssh-ed25519":
                 # From the real proxy namespace, so this checks the actual firewall path.
                 run("docker", "exec", "workshop-guacd-1", "nc", "-z", "-w", "2",
                     address, "22", timeout=4)
-                return f"{address} {key[0]} {key[1]}"
+                return f"{address} {' '.join(keys[0])}"
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
             pass
         time.sleep(2)
     raise RuntimeError(f"{name} did not become reachable over SSH. Check its Incus console.")
 
 
-def grant_access(slot, team, ssh_key, host_key):
+def recording_identity(team):
+    generation = team.get("screen_generation")
+    return f"{team['login']}-r{generation}" if generation else team["login"]
+
+
+def connection_name(team, status):
+    return f"{team['login']}|{status}|{team['screen_generation']}"
+
+
+def set_reset_status(team, status):
+    return db(f"""
+UPDATE guacamole_connection SET connection_name = {literal(connection_name(team, status))}
+WHERE parent_id IS NULL AND split_part(connection_name, '|', 1) = {literal(team['login'])}
+RETURNING connection_id;
+""")
+
+
+def grant_access(slot, team, ssh_key, host_key, retained=False):
     _, _, address, _ = identity(slot)
-    username = literal(team["login"])
+    username = literal(team.get("portal_login", team["login"]))
+    connection = literal(team["login"])
     salt = secrets.token_bytes(32)
     digest = hashlib.sha256((team["password"] + salt.hex().upper()).encode()).hexdigest()
     params = {
-        "hostname": address, "port": "22", "username": "student",
+        "hostname": address, "port": "22", "username": f"team-{slot}",
         "private-key": ssh_key, "host-key": host_key, "enable-sftp": "false",
         "server-alive-interval": "30",
-        "typescript-path": "/recordings", "typescript-name": team["login"],
+        "terminal-type": "xterm-256color", "font-name": "DejaVu Sans Mono",
+        "font-size": "13", "color-scheme": TERMINAL_PALETTE,
+        "recording-path": "/recordings", "recording-name": recording_identity(team) + ".guac",
+        "recording-include-keys": "false",
     }
     values = ", ".join(f"({literal(k)}, {literal(v)})" for k, v in params.items())
+    if retained:
+        # Keep the Guacamole account, permissions and client URL stable across a rebuild.
+        previous = literal(connection_name(team, "resetting"))
+        updated = db(f"""
+BEGIN;
+DELETE FROM guacamole_connection_parameter
+WHERE connection_id IN (SELECT connection_id FROM guacamole_connection
+                        WHERE parent_id IS NULL AND connection_name = {previous});
+INSERT INTO guacamole_connection_parameter (connection_id, parameter_name, parameter_value)
+SELECT connection_id, parameter_name, parameter_value
+FROM guacamole_connection CROSS JOIN (VALUES {values}) AS p(parameter_name, parameter_value)
+WHERE parent_id IS NULL AND connection_name = {previous};
+UPDATE guacamole_connection SET connection_name = {literal(connection_name(team, "ready"))}
+WHERE parent_id IS NULL AND connection_name = {previous}
+RETURNING connection_id;
+COMMIT;
+""")
+        if not updated:
+            raise RuntimeError("The portal connection disappeared during the VM reset.")
+        return
     db(f"""
 BEGIN;
 INSERT INTO guacamole_entity (name, type) VALUES ({username}, 'USER');
@@ -236,49 +290,86 @@ INSERT INTO guacamole_user (entity_id, password_hash, password_salt, password_da
 SELECT entity_id, decode('{digest}', 'hex'), decode('{salt.hex()}', 'hex'), now()
 FROM guacamole_entity WHERE name = {username} AND type = 'USER';
 INSERT INTO guacamole_connection (connection_name, protocol, max_connections, max_connections_per_user)
-VALUES ({username}, 'ssh', 1, 1);
+VALUES ({connection}, 'ssh', 1, 1);
 INSERT INTO guacamole_connection_parameter (connection_id, parameter_name, parameter_value)
 SELECT connection_id, parameter_name, parameter_value
 FROM guacamole_connection CROSS JOIN (VALUES {values}) AS p(parameter_name, parameter_value)
-WHERE connection_name = {username} AND parent_id IS NULL;
+WHERE connection_name = {connection} AND parent_id IS NULL;
 INSERT INTO guacamole_connection_permission (entity_id, connection_id, permission)
 SELECT entity_id, connection_id, 'READ' FROM guacamole_entity CROSS JOIN guacamole_connection
-WHERE name = {username} AND type = 'USER' AND connection_name = {username} AND parent_id IS NULL;
+WHERE name = {username} AND type = 'USER' AND connection_name = {connection} AND parent_id IS NULL;
 COMMIT;
 """)
 
 
 def revoke_access(teams):
-    names = ", ".join(literal(team["login"]) for team in teams)
+    users = ", ".join(literal(team.get("portal_login", team["login"])) for team in teams)
+    connections = ", ".join(literal(team["login"]) for team in teams)
     db(f"""
 BEGIN;
-DELETE FROM guacamole_entity WHERE type = 'USER' AND name IN ({names});
-DELETE FROM guacamole_connection WHERE parent_id IS NULL AND connection_name IN ({names});
+DELETE FROM guacamole_entity WHERE type = 'USER' AND name IN ({users});
+DELETE FROM guacamole_connection WHERE parent_id IS NULL AND split_part(connection_name, '|', 1) IN ({connections});
 COMMIT;
 """)
 
 
-def provision(event, slots):
-    # Persist intent first. After interruption, reset can rebuild pending slots.
+def provision_team(slot, event, key, replacing):
+    name, bridge, _, _ = identity(slot)
+    print(f"Starting {name}", flush=True)
+    existing_bridge = networks().get(bridge)
+    require_owner(existing_bridge, bridge, event)
+    team = event["teams"][slot - 1]
+    retained = False
+    if replacing:
+        current = guests()
+        require_owner(current.get(name), name, event)
+        if team.get("resetting"):
+            retained = bool(set_reset_status(team, "resetting"))
+        else:
+            revoke_access([team])
+        remove_guest(slot, event, current)
+    if not existing_bridge:
+        create_bridge(slot, event)
+    run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key))
+    create_guest(slot, event, key.with_suffix(".pub").read_text().strip())
+    host_key = wait_for_ssh(slot)
+    grant_access(slot, team, key.read_text(), host_key, retained)
+
+
+def provision(event, slots, replacing=False):
+    # Only the parent thread writes state. Persist intent before touching resources.
+    for slot in slots:
+        event["teams"][slot - 1].pop("error", None)
     save(event)
+    failed = []
     with tempfile.TemporaryDirectory(prefix="workshop-keys-", dir="/run") as tmp:
-        for slot in slots:
-            name, bridge, _, _ = identity(slot)
-            print(f"Starting {name}", flush=True)
-            existing_bridge = networks().get(bridge)
-            require_owner(existing_bridge, bridge, event)
-            if not existing_bridge:
-                create_bridge(slot, event)
-            key = str(Path(tmp) / str(slot))
-            run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", key)
-            create_guest(slot, event, Path(key + ".pub").read_text().strip())
-        for slot in slots:
-            host_key = wait_for_ssh(slot)
-            team = event["teams"][slot - 1]
-            grant_access(slot, team, (Path(tmp) / str(slot)).read_text(), host_key)
-            team["ready"] = True
-            save(event)
-            print(f"{identity(slot)[0]} is ready", flush=True)
+        with ThreadPoolExecutor(max_workers=len(slots)) as pool:
+            work = {pool.submit(provision_team, slot, event, Path(tmp) / str(slot), replacing): slot
+                    for slot in slots}
+            for future in as_completed(work):
+                slot = work[future]
+                team = event["teams"][slot - 1]
+                try:
+                    future.result()
+                except (RuntimeError, OSError, subprocess.SubprocessError) as error:
+                    failed.append(slot)
+                    team["error"] = (str(error) if isinstance(error, RuntimeError)
+                                     else "Peter could not prepare this VM. Check its Incus status.")
+                    if team.get("resetting"):
+                        try:
+                            set_reset_status(team, "failed")
+                        except (RuntimeError, OSError, subprocess.SubprocessError):
+                            print(f"Team {slot}: Could not report the reset failure to the portal.",
+                                  file=sys.stderr, flush=True)
+                    print(f"Team {slot}: {team['error']}", file=sys.stderr, flush=True)
+                else:
+                    team["ready"] = True
+                    print(f"{identity(slot)[0]} is ready", flush=True)
+                team.pop("resetting", None)
+                save(event)
+    if failed:
+        numbers = ", ".join(str(slot) for slot in sorted(failed))
+        raise RuntimeError(f"Could not prepare team(s) {numbers}. Retry those teams individually.")
 
 
 def check_available(slots):
@@ -345,23 +436,20 @@ def owned_resources(event, slots):
     return current, bridges
 
 
-def reset(event, slot, keep_password=False):
+def reset(event, slot, keep_password=True):
     active = team_slots(event)
     slots = [slot] if slot else list(active)
     if not slots:
         raise RuntimeError("There are no teams to reset. Add a team first.")
     check_host(len(slots))
-    current, _ = owned_resources(event, slots)
     teams = [active[number] for number in slots]
     for team in teams:
         team["ready"] = False
+        team["screen_generation"] = secrets.token_hex(6)
+        team["resetting"] = keep_password
         if not keep_password:
             team["password"] = secrets.token_urlsafe(24)
-    save(event)
-    revoke_access(teams)
-    for number in slots:
-        remove_guest(number, event, current)
-    provision(event, slots)
+    provision(event, slots, replacing=True)
 
 
 def remove_teams(event, slots):
@@ -378,11 +466,12 @@ def remove_teams(event, slots):
         remove_guest(slot, event, current)
         if bridge in bridges:
             incus("network", "delete", bridge, project="default")
-    names = ", ".join(literal(team["login"]) for team in teams)
+    users = ", ".join(literal(team.get("portal_login", team["login"])) for team in teams)
+    connections = ", ".join(literal(team["login"]) for team in teams)
     db(f"""
 BEGIN;
-DELETE FROM guacamole_user_history WHERE username IN ({names});
-DELETE FROM guacamole_connection_history WHERE username IN ({names}) OR connection_name IN ({names});
+DELETE FROM guacamole_user_history WHERE username IN ({users});
+DELETE FROM guacamole_connection_history WHERE split_part(connection_name, '|', 1) IN ({connections});
 COMMIT;
 """)
     clear_recordings(teams)
@@ -392,16 +481,16 @@ COMMIT;
 
 
 def clear_recordings(teams):
-    try:
-        mountpoint = run("docker", "volume", "inspect", "--format", "{{.Mountpoint}}",
-                         "workshop_recordings", timeout=10)
-    except subprocess.CalledProcessError:
-        return  # An older installation may not have the recording volume yet.
     logins = "|".join(re.escape(team["login"]) for team in teams)
-    filenames = re.compile(rf"(?:{logins})(?:\.\d+)?(?:\.timing)?")
-    for entry in Path(mountpoint).iterdir():
-        if filenames.fullmatch(entry.name):
-            entry.unlink(missing_ok=True)
+    filenames = re.compile(rf"(?:{logins})(?:-r[0-9a-f]{{12}})?(?:\.guac)?(?:\.\d+)?(?:\.timing)?")
+    for volume in ("workshop_screens", "workshop_recordings"):
+        try:
+            mountpoint = run("docker", "volume", "inspect", "--format", "{{.Mountpoint}}", volume, timeout=10)
+        except subprocess.CalledProcessError:
+            continue
+        for entry in Path(mountpoint).iterdir():
+            if filenames.fullmatch(entry.name):
+                entry.unlink(missing_ok=True)
 
 
 def destroy(event):
@@ -425,7 +514,7 @@ def status(event):
     for slot, team in team_slots(event).items():
         name, _, address, _ = identity(slot)
         state = current.get(name, {}).get("status", "Missing")
-        access = "ready" if team["ready"] else "pending"
+        access = "ready" if team["ready"] else "needs retry" if team.get("error") else "pending"
         print(f"Team {slot}: {name} {address} {state} | portal {access}")
 
 
@@ -450,7 +539,9 @@ def main():
     selection.add_argument("--team", type=int, choices=TEAM_SLOTS)
     selection.add_argument("--all", action="store_true")
     replacement.add_argument("--yes", action="store_true", required=True)
-    replacement.add_argument("--keep-password", action="store_true")
+    passwords = replacement.add_mutually_exclusive_group()
+    passwords.add_argument("--keep-password", dest="keep_password", action="store_true", default=True)
+    passwords.add_argument("--rotate-password", dest="keep_password", action="store_false")
     replacement.add_argument("--expect-login", help=argparse.SUPPRESS)
     commands.add_parser("credentials").add_argument("--team", type=int, choices=TEAM_SLOTS,
                                                     required=True)
@@ -494,7 +585,7 @@ def main():
             team = event["teams"][args.team - 1]
             if not team["ready"]:
                 raise RuntimeError("That team's portal access is pending. Check status or reset.")
-            print(f"URL: {PORTAL}\nUsername: {team['login']}\nPassword: {team['password']}")
+            print(f"URL: {PORTAL}\nUsername: {team.get('portal_login', team['login'])}\nPassword: {team['password']}")
 
 
 if __name__ == "__main__":

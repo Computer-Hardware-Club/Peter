@@ -1,6 +1,6 @@
 # Computer Hardware Club workshop platform
 
-Peter runs a single workshop at a time with one to four Debian 13 KVM virtual machines. Each team gets its own VM and Guacamole login. The VM accepts one active browser terminal at a time. Inside the guest, `student` can run `sudo` without a password.
+Peter runs one workshop at a time with up to four Debian 13 KVM virtual machines. Each team signs in to Guacamole with its team number and password. The VM accepts one active browser terminal at a time. Inside the guest, the prompt is `team-N@peter` and the team can run `sudo` without a password. Nano and `chcfetch` are included in the default template.
 
 ## Officer quick start
 
@@ -31,8 +31,9 @@ sudo workshop reset --all --yes
 sudo workshop destroy --yes
 ```
 
-Reset replaces the selected VM from the event’s pinned image and drops its live terminal session. The dashboard preserves the team password on reset. Destroy revokes all event logins and removes the team VMs, guest disks, bridges, saved credentials, and event database history. The image catalog, database service, firewall, and portal stay available between workshops.
+Reset replaces the selected VM from the event’s pinned image. The participant’s open terminal shows reset progress and reconnects when the fresh VM is ready. The team keeps its password by default. Use `--rotate-password` when you need to issue a new password instead. Destroy revokes all event logins and removes the team VMs, guest disks, bridges, saved credentials, and event database history. The image catalog, database service, firewall, and portal stay available between workshops.
 
 - [Operations, templates, and recovery](docs/operations.md)
 - [Cloudflare configuration and recovery](docs/cloudflare.md)
 - [Peter audit and acceptance checks](docs/verification.md)
+- [Workshop work list](docs/work-list.md)

@@ -1,0 +1,108 @@
+#!/bin/bash
+# Show the workshop guest's hardware and resource usage.
+export LC_ALL=C
+
+if [[ -r /etc/os-release ]]; then
+    . /etc/os-release
+fi
+
+cpu=$(awk -F ': *' '/^model name[[:space:]]*:/ { print $2; exit }' /proc/cpuinfo 2>/dev/null)
+threads=$(getconf _NPROCESSORS_ONLN 2>/dev/null)
+memory=$(awk '
+    /^MemTotal:/ { total = $2 }
+    /^MemAvailable:/ { available = $2 }
+    END {
+        if (total > 0 && available > 0)
+            printf "%.0f / %.0f MiB", (total - available) / 1024, total / 1024
+        else if (total > 0)
+            printf "%.0f MiB total", total / 1024
+    }
+' /proc/meminfo 2>/dev/null)
+disk=$(df -hP / 2>/dev/null | awk 'NR == 2 { print $3 " / " $2 " (" $5 ")" }')
+up=$(awk '{
+    mins = int($1 / 60)
+    if (mins >= 1440) printf "%dd ", int(mins / 1440)
+    if (mins >= 60) printf "%dh ", int(mins / 60) % 24
+    printf "%dm", mins % 60
+}' /proc/uptime 2>/dev/null)
+virt=$(systemd-detect-virt --vm 2>/dev/null)
+
+facts=(
+    "$(id -un)@$(uname -n)"
+    "Computer Hardware Club"
+    "----------------------"
+    "System     ${PRETTY_NAME:-$(uname -s)}"
+    "Kernel     $(uname -r)"
+    "Machine    ${virt:-unknown} / $(uname -m)"
+    "CPU        ${cpu:-unknown}"
+    "vCPUs      ${threads:-unknown}"
+    "Memory     ${memory:-unknown}"
+    "Root disk  ${disk:-unknown}"
+    "Uptime     ${up:-unknown}"
+)
+
+# ASCII rendition of the club's beaver badge (computerhardwareclub.org).
+logo=()
+while IFS= read -r line; do
+    logo+=("$line")
+done <<'BADGE'
+             .......
+        ....         ....
+      ..                 ..
+    ..             ++##+   ..
+   .            ####+###+    .
+  .            +###+####      .
+ .            +###++##         .
+ .         ++####+++##         .
+..       ++#####++###          ..
+..      ##+#####+#####         ..
+ .      ##++####+##  ##        .
+ ..     #####+##+##           ..
+  ..    ++++#+##+#####+      ..
+   ..     +++ +# +#####+    ..
+     ..                   ..
+       ...             ...
+           ...........
+BADGE
+
+columns=80
+accent=
+reset=
+if [[ -t 1 ]]; then
+    read -r rows columns <<< "$(stty size 2>/dev/null)"
+    [[ $columns =~ ^[1-9][0-9]*$ ]] || columns=80
+    if [[ -n ${TERM:-} && $TERM != dumb && -z ${NO_COLOR:-} ]]; then
+        accent=$'\033[38;5;202m'
+        reset=$'\033[0m'
+    fi
+fi
+
+logo_width=33
+gap=3
+printf '\n'
+if (( columns >= 74 )); then
+    fact_width=$((columns - logo_width - gap - 1))
+    for index in "${!logo[@]}"; do
+        printf '%s%-*s%s%*s%.*s\n' "$accent" "$logo_width" "${logo[index]}" "$reset" \
+            "$gap" '' "$fact_width" "${facts[index]:-}"
+    done
+else
+    if (( columns >= 20 )); then
+        printf '%s' "$accent"
+        cat <<'BADGE'
+      .......
+   ..         ..
+  .      #####  .
+ .       ####    .
+.      #####      .
+.    ########     .
+ .   ######      .
+ .    #######    .
+   .           .
+     ..     ..
+BADGE
+        printf '%s\n' "$reset"
+    fi
+    printf '%s\n' "${facts[@]}" | fold -sw "$((columns > 1 ? columns - 1 : 1))"
+fi
+printf '\n'

@@ -23,13 +23,15 @@ ssh 192.168.1.12 'sudo -n cat /etc/workshop/dashboard/lan-ca.crt' > peter-worksh
 ## Run a workshop
 
 1. Sign in, enter a workshop name, choose `test-vm`, and start with one to four teams. The default is a minimal Debian 13 VM with SSH, sudo, and the Incus agent.
-2. When a team shows **Ready**, open **Team login**, choose **Copy team login**, and send the details privately in Discord or another channel you already use. Participants use the copied workshop link and sign in with their team username and password.
+2. As each team shows **Ready**, open **Team login** and use **Copy password** to share the password privately. The portal username is the team number. Participants see the Computer Hardware Club title above their `team-N@peter` prompt. If a team shows **Needs retry**, select it and use **Retry VM**. The other teams can connect while it rebuilds.
 3. Use **Add team** or **Remove team** as attendance changes. The other teams keep their running VMs and credentials. Each VM accepts one active browser terminal.
-4. Select a team to see its current connection state and live or recent terminal output. Guacamole records what the browser terminal receives, including commands echoed by the shell and their results. Commands that run without appearing in that terminal are outside the recording. Tell participants about monitoring before they begin.
-5. Use **Reset VM** to rebuild a team from the event's original image. The old terminal disconnects and the team can reconnect with the same credentials once the replacement is ready. The other VMs continue running.
-6. Use **End workshop** to remove the VMs, team logins, and transcripts.
+4. Select a team to mirror its screen, or open **All terminals** for a tiled view. The dashboard renders Guacamole’s graphical output, including full-screen applications and colors. Officers can see the screen without taking a participant connection or sending input. Tell participants about monitoring before they begin.
+5. Use **Reset VM** to rebuild a team from the event's original image. The participant's open terminal shows reset progress and reconnects automatically to the fresh VM. The team keeps its password, and the other VMs continue running.
+6. Use **End workshop** to remove the VMs, team logins, and screen recordings.
 
-The dashboard shows the last 64 KiB of the most recent terminal session for the selected team. Recordings are stored in a shared 64 MiB memory volume and survive a team reset. The dashboard warns when recording space runs low. Removing a team or ending the workshop clears the corresponding files. Restarting guacd or Peter clears the memory volume.
+Screen recordings are stored in a shared 512 MiB memory volume and survive a team reset. The dashboard shows the latest session for each team and warns when space runs low. Removing a team or ending the workshop clears the corresponding files. Restarting guacd or Peter clears the memory volume.
+
+If the participant portal is unavailable, the dashboard still shows the VM roster and marks session status unknown. Team login becomes available again once the portal is healthy and the VM is running. If screen updates stop, **Stale** marks the last available frame.
 
 ## Install or restore
 

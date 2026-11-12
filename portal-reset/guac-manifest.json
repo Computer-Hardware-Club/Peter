@@ -1,0 +1,7 @@
+{
+  "guacamoleVersion": "1.6.0",
+  "name": "CHC Workshop VM Reset",
+  "namespace": "chc-workshop-reset",
+  "js": ["reset.js"],
+  "css": ["reset.css"]
+}

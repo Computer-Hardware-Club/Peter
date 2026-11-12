@@ -15,6 +15,12 @@ for package in "$@"; do
     fi
 done
 
+guest_assets="$(dirname -- "${BASH_SOURCE[0]}")/guest"
+if [[ ! -r $guest_assets/workshop-login.sh || ! -r $guest_assets/chcfetch ]]; then
+    echo "Missing workshop guest assets in $guest_assets" >&2
+    exit 1
+fi
+
 exec 9>/var/lib/workshop/lock
 flock -n 9 || { echo 'Another workshop command is running.' >&2; exit 1; }
 if [[ -e /var/lib/workshop/event.json ]]; then
@@ -62,7 +68,7 @@ apt=(apt-get -o "Dir::Etc::sourcelist=$tmp/debian.list" -o "Dir::Etc::sourcepart
      -o "Dir::State::status=$tmp/status" -o "Dir::Cache::archives=$tmp/archives"
      -o "Dir::Cache::pkgcache=$tmp/pkgcache.bin" -o "Dir::Cache::srcpkgcache=$tmp/srcpkgcache.bin")
 "${apt[@]}" update
-"${apt[@]}" --download-only --no-install-recommends -y install openssh-server sudo "$@"
+"${apt[@]}" --download-only --no-install-recommends -y install openssh-server sudo nano "$@"
 
 # Incus exec uses the VM agent over vsock and needs no guest networking.
 "${incus[@]}" exec "$builder" -- mkdir -p /run/workshop-packages </dev/null
@@ -73,11 +79,20 @@ set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 apt-get -o Dir::Etc::sourcelist=/dev/null -o Dir::Etc::sourceparts=- \
     --no-install-recommends -y install /run/workshop-packages/*.deb
+command -v nano >/dev/null
 systemctl enable ssh.service
 apt-get clean
 cloud-init clean --logs --machine-id --seed --configs network ssh_config
 rm -f /etc/ssh/ssh_host_*
 GUEST
+"${incus[@]}" exec "$builder" --mode non-interactive -- sh -ec '
+    cat > /etc/profile.d/workshop-login.sh
+    chmod 0644 /etc/profile.d/workshop-login.sh
+' < "$guest_assets/workshop-login.sh"
+"${incus[@]}" exec "$builder" --mode non-interactive -- sh -ec '
+    cat > /usr/local/bin/chcfetch
+    chmod 0755 /usr/local/bin/chcfetch
+' < "$guest_assets/chcfetch"
 "${incus[@]}" stop "$builder" --timeout 60
 "${incus[@]}" publish "$builder" --alias "$alias_name" --reuse \
     description="Debian 13 workshop VM ($alias_name)"

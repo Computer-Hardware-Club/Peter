@@ -7,11 +7,13 @@ const model = {
   csrf: null,
   revision: 0,
   selected: null,
-  viewRevision: 0,
   roster: new Map(),
+  allTerminals: false,
+  tiles: new Map(),
+  screens: new Map(),
+  stateStale: false,
   templateOptions: "",
   stateRequest: null,
-  transcriptRequest: null,
   submitting: false,
   pendingAction: null,
   credentials: null,
@@ -69,13 +71,19 @@ function signInScreen(error = "") {
   model.revision += 1;
   model.csrf = null;
   model.state = null;
+  model.stateStale = false;
   model.selected = null;
-  model.viewRevision += 1;
+  model.allTerminals = false;
   model.pendingAction = null;
   model.submitting = false;
   model.roster.clear();
+  model.tiles.clear();
+  for (const entry of model.screens.values()) entry.mirror.destroy();
+  model.screens.clear();
   $("team-list").replaceChildren();
-  $("terminal-output").textContent = "";
+  $("terminal-grid").replaceChildren();
+  $("team-terminal").querySelector(".terminal-screen").replaceChildren();
+  $("main").classList.remove("wall-mode");
   $("job-message").textContent = "";
   $("workshop-title").textContent = "Workshops";
   $("workshop-summary").textContent = "";
@@ -97,16 +105,22 @@ function getTeam(slot = model.selected) {
 }
 
 function teamPresentation(team) {
+  if (team.resetting) return { label: "Resetting", tone: "pending" };
+  if (team.error) return { label: "Needs retry", tone: "offline" };
+  if (model.stateStale) return { label: "Unknown", tone: "offline" };
   const machine = String(team.status || "").toLowerCase();
   if (team.active) return { label: "In session", tone: "live" };
-  if (team.ready && (!machine || machine === "running" || machine === "ready")) {
-    return { label: "Ready", tone: "ready" };
+  if (team.ready) return { label: "Ready", tone: "ready" };
+  if (machine === "unknown") return { label: "Unknown", tone: "offline" };
+  if (team.provisioned && machine === "running") return { label: "VM running", tone: "offline" };
+  if (!team.provisioned && model.state.job?.state === "running") {
+    return { label: "Preparing", tone: "pending" };
   }
   if (machine === "stopped") return { label: "Stopped", tone: "offline" };
   if (machine === "error" || machine === "missing" || machine === "offline") {
     return { label: machine[0].toUpperCase() + machine.slice(1), tone: "offline" };
   }
-  return { label: "Preparing", tone: "pending" };
+  return { label: "Pending", tone: "pending" };
 }
 
 function setPill(element, status) {
@@ -163,15 +177,9 @@ function renderRoster(teams) {
 }
 
 function chooseTeam(slot) {
-  if (model.selected !== slot) {
-    model.selected = slot;
-    model.viewRevision += 1;
-    $("terminal-output").textContent = "";
-    $("terminal-output").className = "empty";
-    $("terminal-scroll").scrollTop = 0;
-  }
+  model.selected = slot;
   renderState();
-  refreshTranscript();
+  refreshScreens();
 }
 
 function renderTeam(team, busy) {
@@ -180,19 +188,12 @@ function renderTeam(team, busy) {
 
   const status = teamPresentation(team);
   $("team-title").textContent = `Team ${team.slot}`;
-  $("team-subtitle").textContent = team.ready
-    ? `VM template · ${model.state.event.template}` : "VM access is being prepared.";
+  $("team-subtitle").textContent = team.error || `VM template · ${model.state.event.template}`;
   setPill($("team-status"), status);
-  $("open-credentials").disabled = !team.ready || busy;
+  $("open-credentials").disabled = !team.ready || model.stateStale;
+  $("reset-team").textContent = team.provisioned ? "Reset VM" : "Retry VM";
   $("reset-team").disabled = busy;
   $("remove-team").disabled = busy;
-  $("terminal-status").classList.toggle("live", Boolean(team.active));
-  $("terminal-status").lastElementChild.textContent = team.active ? "Live" : "Recent";
-
-  if (!$("terminal-output").textContent) {
-    $("terminal-output").className = "empty";
-    $("terminal-output").textContent = team.active ? "Waiting for terminal output…" : "No terminal output yet.";
-  }
 }
 
 function renderState() {
@@ -201,25 +202,28 @@ function renderState() {
   const teams = [...(event?.teams || [])].sort((left, right) => left.slot - right.slot);
   const live = teams.filter((team) => team.active).length;
   const ready = teams.filter((team) => team.ready).length;
-  const busy = model.submitting || job?.state === "running";
-  const nextSelected = teams.some((team) => team.slot === model.selected) ? model.selected : teams[0]?.slot ?? null;
-  if (nextSelected !== model.selected) {
-    model.selected = nextSelected;
-    model.viewRevision += 1;
-    $("terminal-output").textContent = "";
-    $("terminal-scroll").scrollTop = 0;
-  }
+  const sessionUnknown = model.stateStale || teams.some((team) => team.active === null);
+  const busy = model.stateStale || model.submitting || job?.state === "running";
+  if (!getTeam()) model.selected = teams[0]?.slot ?? null;
+  if (!teams.length) model.allTerminals = false;
+  const wall = model.allTerminals;
+  $("main").classList.toggle("wall-mode", wall);
+  $("workshop-heading").hidden = wall;
+  $("terminal-wall").hidden = !wall;
 
   $("workshop-title").textContent = event?.name || "Workshops";
   $("workshop-summary").textContent = event
-    ? `${event.template} · ${teams.length} team${teams.length === 1 ? "" : "s"} · ${live} in session`
+    ? `${event.template} · ${teams.length} team${teams.length === 1 ? "" : "s"} · ${sessionUnknown ? "Session status unknown" : `${live} in session`}`
     : "Set up isolated VMs for your next meeting.";
-  $("workshop-start").hidden = Boolean(event);
-  $("active-workshop").hidden = !event;
+  $("workshop-start").hidden = Boolean(event) || wall;
+  $("active-workshop").hidden = !event || wall;
   $("portal-link").hidden = !portal;
   if (portal) $("portal-link").href = portal;
+  const warning = model.stateStale ? "Could not refresh workshop status. Retrying…" : (model.state.warnings || []).join(" ");
+  $("service-warning").hidden = !warning;
+  if ($("service-warning").textContent !== warning) $("service-warning").textContent = warning;
 
-  $("job-banner").hidden = !job && !model.submitting;
+  $("job-banner").hidden = wall || (!job && !model.submitting);
   $("job-banner").className = `notice ${job?.state || "running"}`;
   const jobMessage = model.submitting
     ? "Submitting workshop change…"
@@ -231,13 +235,16 @@ function renderState() {
   renderTemplates(templates || []);
   $("deploy-form").querySelector("button[type=submit]").disabled = busy || !templates?.length;
   $("add-team").disabled = busy || teams.length >= 4;
+  $("open-terminals").disabled = !teams.length;
   $("end-workshop").disabled = busy;
-  $("roster-summary").textContent = `${ready} of ${teams.length} ready`;
+  $("roster-summary").textContent = model.stateStale ? "Status unknown" : `${ready} of ${teams.length} ready`;
   renderRoster(teams);
   renderTeam(getTeam(), busy);
+  syncTerminalTiles(teams);
+  renderScreens();
   if (model.credentials) {
     const team = getTeam(model.credentials.slot);
-    if (!team?.ready || team.username !== model.credentials.username) closeCredentials();
+    if (model.stateStale || !team?.ready || team.username !== model.credentials.team) closeCredentials();
   }
 }
 
@@ -252,6 +259,7 @@ async function refreshState({ fresh = false } = {}) {
       const state = await api("/api/state");
       if (revision !== model.revision) return;
       model.state = state;
+      model.stateStale = false;
       model.csrf = state.csrf || model.csrf;
       setMode("dashboard");
       renderState();
@@ -260,7 +268,8 @@ async function refreshState({ fresh = false } = {}) {
       if (error.status === 401) {
         signInScreen(model.mode === "dashboard" ? "Your session ended. Sign in again." : "");
       } else if (model.mode === "dashboard") {
-        if ($("message").hidden) message("Could not refresh workshop status. Retrying…", true);
+        model.stateStale = true;
+        renderState();
       } else {
         signInScreen("Could not connect to Peter. Try signing in again.");
       }
@@ -271,49 +280,130 @@ async function refreshState({ fresh = false } = {}) {
   if (model.stateRequest === request) model.stateRequest = null;
 }
 
-function setTranscript(text, empty) {
-  const output = $("terminal-output");
-  if (output.textContent === text && output.classList.contains("empty") === empty) return;
-  const scroll = $("terminal-scroll");
-  const follow = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 35;
-  output.textContent = text;
-  output.classList.toggle("empty", empty);
-  if (follow) scroll.scrollTop = scroll.scrollHeight;
+function syncTerminalTiles(teams) {
+  const grid = $("terminal-grid");
+  const identities = new Set(teams.map((team) => team.username));
+  for (const [username, tile] of model.tiles) {
+    if (!identities.has(username)) {
+      tile.remove();
+      model.tiles.delete(username);
+      model.screens.get(username)?.mirror.destroy();
+      model.screens.delete(username);
+    }
+  }
+  for (const [index, team] of teams.entries()) {
+    const entry = model.screens.get(team.username);
+    if (entry && entry.generation !== team.screenGeneration) {
+      entry.mirror.destroy();
+      model.screens.delete(team.username);
+    }
+    let tile = model.tiles.get(team.username);
+    if (!tile) {
+      tile = $("terminal-tile").content.firstElementChild.cloneNode(true);
+      tile.querySelector("h3").textContent = `Team ${team.slot}`;
+      tile.querySelector(".terminal-scroll").setAttribute("aria-label", `Team ${team.slot} terminal screen`);
+      model.tiles.set(team.username, tile);
+    }
+    if (grid.children[index] !== tile) grid.insertBefore(tile, grid.children[index] || null);
+  }
+  grid.dataset.count = teams.length;
 }
 
-async function refreshTranscript() {
-  const team = getTeam();
-  if (!team || model.mode !== "dashboard" || model.transcriptRequest) return;
-  const revision = model.viewRevision;
-  const request = (async () => {
-    try {
-      const { text, storageLow } = await api(`/api/team/${team.slot}/transcript`);
-      if (revision !== model.viewRevision) return;
-      $("recording-warning").hidden = !storageLow;
-      if (text) setTranscript(text, false);
-      else setTranscript(team.active ? "Waiting for terminal output…" : "No terminal output yet.", true);
-    } catch (error) {
-      if (revision !== model.viewRevision) return;
-      if (error.status === 401) signInScreen("Your session ended. Sign in again.");
-      else if ($("terminal-output").classList.contains("empty")) {
-        setTranscript("Terminal output is temporarily unavailable.", true);
-      }
+function renderTerminal(panel, team) {
+  const entry = model.screens.get(team.username);
+  const mount = panel.querySelector(".terminal-screen");
+  const empty = panel.querySelector(".terminal-empty");
+  const status = panel.querySelector(".terminal-status");
+  const active = !model.stateStale && team.active === true;
+  const unavailable = model.stateStale || team.active === null || entry?.failed;
+  const hasFrame = Boolean(entry?.mirror.hasFrame);
+  const label = team.resetting ? "Resetting" : unavailable ? (hasFrame ? "Stale" : "Unavailable")
+    : active ? (hasFrame ? "Live" : "Connecting") : (hasFrame ? "Recent" : "Idle");
+  status.textContent = label;
+  status.className = `terminal-status ${label.toLowerCase()}`;
+  if (panel.dataset.username !== team.username) {
+    model.screens.get(panel.dataset.username)?.mirror.mount(null);
+    mount.replaceChildren();
+    panel.dataset.username = team.username;
+  }
+  if (entry) entry.mirror.mount(mount);
+  empty.hidden = hasFrame && !team.resetting;
+  empty.textContent = team.resetting ? "Waiting for the fresh VM…" : unavailable ? "Terminal screen unavailable."
+    : active ? "Waiting for the team’s screen…" : "No session yet.";
+}
+
+function renderScreens() {
+  if (model.allTerminals) {
+    const teams = model.state.event.teams;
+    for (const team of teams) renderTerminal(model.tiles.get(team.username), team);
+    $("wall-recording-warning").hidden = !teams.some((team) => model.screens.get(team.username)?.storageLow);
+  } else if (getTeam()) {
+    const team = getTeam();
+    renderTerminal($("team-terminal"), team);
+    $("team-terminal").querySelector(".recording-warning").hidden = !model.screens.get(team.username)?.storageLow;
+  }
+}
+
+function teamPath(team, resource) {
+  return `/api/team/${team.slot}/${encodeURIComponent(team.username)}/${resource}`;
+}
+
+async function refreshScreen(team) {
+  if (team.resetting) return;
+  const { username, slot, screenGeneration } = team;
+  let entry = model.screens.get(username);
+  if (entry?.loading) return;
+  if (!entry) {
+    entry = { mirror: new ScreenMirror(document.createElement("div")), generation: screenGeneration };
+    entry.mirror.onframe = renderScreens;
+    model.screens.set(username, entry);
+  }
+  const current = () => model.screens.get(username) === entry && getTeam(slot)?.username === username;
+  entry.loading = true;
+  try {
+    let more;
+    do {
+      const query = new URLSearchParams({ offset: entry.mirror.offset });
+      if (entry.mirror.token) query.set("token", entry.mirror.token);
+      const result = await api(`${teamPath(team, "screen")}?${query}`);
+      if (!current()) return;
+      if (result.team !== username || result.generation !== screenGeneration) return;
+      await entry.mirror.apply(result);
+      if (!current()) return;
+      Object.assign(entry, { storageLow: result.storageLow, failed: false });
+      renderScreens();
+      more = result.more;
+    } while (more && !document.hidden && (model.allTerminals || model.selected === slot));
+  } catch (error) {
+    if (!current()) return;
+    if (error.status === 401) {
+      signInScreen("Your session ended. Sign in again.");
+      return;
     }
-  })();
-  model.transcriptRequest = request;
-  await request;
-  if (model.transcriptRequest === request) model.transcriptRequest = null;
-  if (revision !== model.viewRevision) refreshTranscript();
+    entry.failed = true;
+  } finally {
+    entry.loading = false;
+    if (current()) renderScreens();
+  }
+}
+
+function refreshScreens() {
+  if (model.mode !== "dashboard" || document.hidden) return;
+  if (model.allTerminals) {
+    for (const team of model.state.event.teams) refreshScreen(team);
+  } else if (getTeam()) {
+    refreshScreen(getTeam());
+  }
 }
 
 async function sendAction(payload) {
-  if (model.submitting || model.state?.job?.state === "running") return;
+  if (model.stateStale || model.submitting || model.state?.job?.state === "running") return;
   model.submitting = true;
   renderState();
   try {
     await api("/api/action", payload);
     await refreshState({ fresh: true });
-    refreshTranscript();
+    refreshScreens();
   } catch (error) {
     if (error.status === 401) signInScreen("Your session ended. Sign in again.");
     else message(error.message, true);
@@ -357,10 +447,10 @@ async function openCredentials(slot) {
   $("credentials-message").textContent = "Loading team credentials…";
   $("credentials-dialog").showModal();
   try {
-    const credentials = await api(`/api/team/${slot}/credentials`);
+    const credentials = await api(teamPath(team, "credentials"));
     if (revision !== model.credentialRevision || !$("credentials-dialog").open) return;
     const current = getTeam(slot);
-    if (!current?.ready || current.username !== team.username || current.username !== credentials.username) {
+    if (model.stateStale || !current?.ready || current.username !== team.username || current.username !== credentials.team) {
       $("credentials-message").textContent = "The team changed. Close this window and open its credentials again.";
       return;
     }
@@ -419,12 +509,26 @@ $("deploy-form").addEventListener("submit", (event) => {
   });
 });
 $("add-team").addEventListener("click", () => sendAction({ action: "add", run: model.state.event.run }));
+$("open-terminals").addEventListener("click", () => {
+  model.allTerminals = true;
+  renderState();
+  $("close-terminals").focus();
+  refreshScreens();
+});
+$("close-terminals").addEventListener("click", () => {
+  model.allTerminals = false;
+  renderState();
+  $("open-terminals").focus();
+  refreshScreens();
+});
 $("reset-team").addEventListener("click", () => {
   const team = getTeam();
   if (!team) return;
   const { slot, username } = team;
-  confirmAction({ action: "reset", slot, username }, `Reset Team ${slot}’s VM?`,
-    "This wipes the VM and starts a fresh copy from the workshop template. The team can reconnect with the same credentials.", "Wipe and reset VM");
+  const title = team.provisioned ? `Reset Team ${slot}’s VM?` : `Retry Team ${slot}’s VM?`;
+  confirmAction({ action: "reset", slot, username }, title,
+    "This replaces the VM with a fresh copy from the workshop template and keeps the team’s login details.",
+    team.provisioned ? "Wipe and reset VM" : "Retry VM");
 });
 $("remove-team").addEventListener("click", () => {
   const team = getTeam();
@@ -453,23 +557,22 @@ $("copy-credentials").addEventListener("click", async () => {
   const credentials = model.credentials;
   if (!credentials) return;
   try {
-    await navigator.clipboard.writeText([
-      credentials.portal,
-      `Username: ${credentials.username}`,
-      `Password: ${credentials.password}`,
-    ].join("\n"));
-    if (credentials === model.credentials) $("credentials-message").textContent = "Copied the workshop link and team login.";
+    await navigator.clipboard.writeText(credentials.password);
+    if (credentials === model.credentials) $("credentials-message").textContent = "Password copied.";
   } catch {
-    if (credentials === model.credentials) $("credentials-message").textContent = "Select the username and password to copy them.";
+    if (credentials === model.credentials) $("credentials-message").textContent = "Select the password to copy it.";
   }
 });
 
 async function poll() {
   if (model.mode === "dashboard" && !document.hidden) {
     await refreshState();
-    refreshTranscript();
   }
   setTimeout(poll, 2000);
 }
 
-refreshState().then(poll);
+refreshState().then(() => {
+  refreshScreens();
+  setInterval(refreshScreens, 850);
+  poll();
+});

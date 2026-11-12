@@ -18,7 +18,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y incus qemu-system-x86 ovmf docker.io docker-compose-v2 nftables curl openssh-client
 
-install -d -m 0755 /opt/workshop /opt/workshop/{infra,templates,docs}
+install -d -m 0755 /opt/workshop /opt/workshop/{infra,templates,docs,guest,portal-reset/extensions}
 install -d -m 0700 /var/lib/workshop /etc/workshop
 # A checked-out copy may already be in the installation directory.
 if [[ $(pwd -P) != /opt/workshop ]]; then
@@ -26,9 +26,17 @@ if [[ $(pwd -P) != /opt/workshop ]]; then
     install -m 0644 infra/* /opt/workshop/infra/
     chmod 0755 /opt/workshop/infra/db-init.sh
     install -m 0644 templates/*.json /opt/workshop/templates/
+    install -m 0644 guest/workshop-login.sh /opt/workshop/guest/
+    install -m 0755 guest/chcfetch /opt/workshop/guest/
+    install -m 0644 portal-reset/{guac-manifest.json,reset.js,reset.css} /opt/workshop/portal-reset/
     install -m 0644 README.md /opt/workshop/
     install -m 0644 docs/*.md /opt/workshop/docs/
 fi
+(
+    cd /opt/workshop/portal-reset
+    python3 -m zipfile -c extensions/workshop-reset.jar.new guac-manifest.json reset.js reset.css
+    mv -f extensions/workshop-reset.jar.new extensions/workshop-reset.jar
+)
 rm -f /opt/workshop/templates/ubuntu-basics.json
 ln -sfn /opt/workshop/workshop /usr/local/sbin/workshop
 

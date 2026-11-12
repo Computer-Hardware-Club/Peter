@@ -3,9 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
+  <meta name="color-scheme" content="dark">
   <title>Workshop admin · Computer Hardware Club</title>
   <link rel="stylesheet" href="/style.css">
+  <script defer src="/vendor/guacamole-common-js-1.6.0.min.js"></script>
+  <script defer src="/mirror.js"></script>
   <script defer src="/app.js"></script>
 </head>
 <body>
@@ -22,7 +24,7 @@
     </div>
   </header>
 
-  <main class="shell">
+  <main class="shell" id="main">
     <section id="loading" class="panel centered" aria-live="polite">
       <p>Connecting to Peter…</p>
     </section>
@@ -39,29 +41,28 @@
     </section>
 
     <div id="dashboard" hidden>
-      <section class="page-heading">
+      <section class="page-heading" id="workshop-heading">
         <div>
-          <p class="eyebrow">Administrator dashboard</p>
           <h1 id="workshop-title">Workshops</h1>
           <p id="workshop-summary" class="muted"></p>
         </div>
         <a class="button secondary" id="portal-link" target="_blank" rel="noopener noreferrer">Participant portal <span aria-hidden="true">↗</span></a>
       </section>
 
+      <p id="service-warning" class="notice failed" role="status" hidden></p>
       <div id="job-banner" class="notice" role="status" hidden>
         <span id="job-indicator" class="indicator" aria-hidden="true"></span>
         <span id="job-message"></span>
       </div>
 
       <section class="panel start-panel" id="workshop-start" aria-labelledby="start-heading" hidden>
-        <div>
-          <h2 id="start-heading">Start a workshop</h2>
-          <p class="muted">Choose an image and a starting team count. Add or remove teams as people arrive.</p>
-        </div>
+        <h2 id="start-heading">Start a workshop</h2>
         <form id="deploy-form">
-          <label for="workshop-name">Workshop name</label>
-          <input id="workshop-name" name="name" value="workshop" required pattern="[a-z][a-z0-9\-]{0,23}" maxlength="24" spellcheck="false" aria-describedby="workshop-name-hint">
-          <small id="workshop-name-hint">Up to 24 lowercase letters, digits, and hyphens. Start with a letter.</small>
+          <div>
+            <label for="workshop-name">Workshop name</label>
+            <input id="workshop-name" name="name" value="workshop" required pattern="[a-z][a-z0-9\-]{0,23}" maxlength="24" spellcheck="false" aria-describedby="workshop-name-hint">
+            <small id="workshop-name-hint">Up to 24 lowercase letters, digits, and hyphens. Start with a letter.</small>
+          </div>
           <div class="deploy-options">
             <div>
               <label for="template">VM template</label>
@@ -90,9 +91,13 @@
                 <h2 id="roster-title">Teams</h2>
                 <p class="muted" id="roster-summary"></p>
               </div>
-              <button id="add-team" class="button secondary compact" type="button" data-action-control>+ Add team</button>
             </div>
             <div id="team-list" class="team-list"></div>
+            <div class="roster-actions">
+              <button id="open-terminals" class="button secondary compact" type="button">All terminals</button>
+              <button id="add-team" class="button secondary compact" type="button" data-action-control>+ Add team</button>
+              <button id="end-workshop" class="button quiet danger-text compact" type="button" data-action-control>End workshop</button>
+            </div>
           </section>
 
           <section class="panel team-detail" id="team-detail" aria-labelledby="team-title" hidden>
@@ -107,32 +112,49 @@
               <div class="team-actions">
                 <button class="button secondary compact" type="button" id="open-credentials">Team login</button>
                 <button class="button secondary compact" type="button" id="reset-team" data-action-control>Reset VM</button>
+                <button id="remove-team" class="button secondary danger-text compact" type="button" data-action-control>Remove team</button>
               </div>
             </div>
-            <div class="terminal">
+            <div class="terminal" id="team-terminal">
               <div class="terminal-heading">
                 <h3>Terminal output</h3>
-                <span id="terminal-status" class="terminal-status"><span class="indicator" aria-hidden="true"></span><span></span></span>
+                <span class="terminal-status"></span>
               </div>
-              <div class="terminal-scroll" id="terminal-scroll" tabindex="0" aria-label="Team terminal transcript">
-                <pre id="terminal-output"></pre>
+              <div class="terminal-scroll" role="region" aria-label="Team terminal screen">
+                <div class="terminal-screen"></div>
+                <p class="terminal-empty" hidden></p>
               </div>
-              <p id="recording-warning" class="recording-warning" hidden>Recording storage is nearly full. Terminal output may stop being captured.</p>
-            </div>
-            <div class="detail-footer">
-              <p class="muted">Terminal output is recorded for troubleshooting and may include commands and their results.</p>
-              <button id="remove-team" class="button quiet danger-text" type="button" data-action-control>Remove team</button>
+              <p class="recording-warning" hidden>Recording storage is nearly full. Terminal output may stop being captured.</p>
             </div>
           </section>
         </div>
-        <div class="workshop-footer">
-          <button id="end-workshop" class="button quiet danger-text" type="button" data-action-control>End workshop</button>
-        </div>
       </div>
+
+      <section id="terminal-wall" class="terminal-wall" aria-labelledby="wall-title" hidden>
+        <header class="wall-heading">
+          <h1 id="wall-title">All terminals</h1>
+          <button id="close-terminals" class="button secondary compact" type="button">Back to workshop</button>
+        </header>
+        <div id="terminal-grid" class="terminal-grid"></div>
+        <p id="wall-recording-warning" class="recording-warning" hidden>Recording storage is nearly full. Terminal output may stop being captured.</p>
+      </section>
 
       <p class="toast" id="message" role="status" hidden></p>
     </div>
   </main>
+
+  <template id="terminal-tile">
+    <article class="terminal">
+      <header class="terminal-heading">
+        <h3></h3>
+        <span class="terminal-status"></span>
+      </header>
+      <div class="terminal-scroll" role="region">
+        <div class="terminal-screen"></div>
+        <p class="terminal-empty" hidden></p>
+      </div>
+    </article>
+  </template>
 
   <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-copy">
     <form method="dialog" class="dialog-body">
@@ -159,8 +181,7 @@
           <dt>Username</dt><dd id="team-username"></dd>
           <dt>Password</dt><dd id="team-password"></dd>
         </dl>
-        <button class="button secondary compact" id="copy-credentials" type="button">Copy team login</button>
-
+        <button class="button secondary compact" id="copy-credentials" type="button">Copy password</button>
       </div>
     </div>
   </dialog>

@@ -1,0 +1,47 @@
+.chc-vm-reset {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: grid;
+    place-items: center;
+    padding: 1.25rem;
+    background: #0d1117;
+    color: #e6edf3;
+}
+
+.chc-vm-reset[hidden] {
+    display: none;
+}
+
+.chc-vm-reset__panel {
+    box-sizing: border-box;
+    width: min(100%, 28rem);
+    padding: 1.5rem;
+    border: 1px solid #30363d;
+    border-radius: .75rem;
+    background: #161b22;
+    font: 1rem/1.5 system-ui, sans-serif;
+}
+
+.chc-vm-reset__panel p {
+    margin: 0;
+}
+
+.chc-vm-reset__panel progress {
+    display: block;
+    width: 100%;
+    margin-top: .9rem;
+    accent-color: #58a6ff;
+}
+
+.chc-vm-reset__panel progress[hidden],
+.chc-vm-reset__panel button[hidden] {
+    display: none;
+}
+
+.chc-vm-reset__panel button {
+    margin-top: .9rem;
+    color: inherit;
+    background: #21262d;
+    border-color: #8b949e;
+}

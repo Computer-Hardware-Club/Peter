@@ -27,10 +27,11 @@ fi
 if ! id workshop-dashboard >/dev/null 2>&1; then
     useradd --system --user-group --no-create-home --shell /usr/sbin/nologin workshop-dashboard
 fi
-install -d -m 0755 /opt/workshop/dashboard
+install -d -m 0755 /opt/workshop/dashboard/vendor
 install -d -m 0700 /etc/workshop/dashboard
 if [[ $(pwd -P) != /opt/workshop ]]; then
-    install -m 0644 dashboard/{host.py,server.py,index.html,app.js,style.css} /opt/workshop/dashboard/
+    install -m 0644 dashboard/{host.py,server.py,mirror.py,index.html,app.js,mirror.js,style.css} /opt/workshop/dashboard/
+    install -m 0644 dashboard/vendor/* /opt/workshop/dashboard/vendor/
     install -m 0755 install-dashboard.sh /opt/workshop/
 fi
 install -m 0644 infra/workshop-dashboard{.service,-host.socket,-host@.service} /etc/systemd/system/

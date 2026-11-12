@@ -16,15 +16,18 @@ import socket
 import ssl
 import threading
 import time
+from urllib.parse import parse_qs, urlsplit
 
 ASSETS = Path(__file__).resolve().parent
 SOCKET = "/run/workshop-dashboard-host.sock"
-TEAM_PATH = re.compile(r"/api/team/([1-4])/(credentials|transcript)")
+TEAM_PATH = re.compile(r"/api/team/([1-4])/([a-z0-9-]{1,64})/(credentials|screen)")
 FILES = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascript"),
-         "/style.css": ("style.css", "text/css")}
+         "/style.css": ("style.css", "text/css"), "/mirror.js": ("mirror.js", "text/javascript"),
+         "/vendor/guacamole-common-js-1.6.0.min.js":
+             ("vendor/guacamole-common-js-1.6.0.min.js", "text/javascript")}
 SESSION_LIFETIME = 8 * 60 * 60
 ACTIONS = {"deploy": "Start workshop", "add": "Add team", "remove": "Remove team",
-           "reset": "Refresh VM", "destroy": "End workshop"}
+           "reset": "Reset VM", "destroy": "End workshop"}
 
 
 def host_request(op, **data):
@@ -103,9 +106,9 @@ class Dashboard:
             self.job = job
 
     def state(self, csrf):
+        result = host_request("state")
         with self.lock:
             job = self.job
-        result = host_request("state")
         return {**result, "csrf": csrf, "job": job}
 
 
@@ -124,7 +127,8 @@ class Request(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Content-Security-Policy",
-                         "default-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'")
+                         "default-src 'self'; img-src 'self' data: blob:; frame-ancestors 'none'; "
+                         "object-src 'none'; base-uri 'none'; form-action 'self'")
         if cookie:
             self.send_header("Set-Cookie", cookie)
         self.end_headers()
@@ -173,10 +177,19 @@ class Request(BaseHTTPRequestHandler):
             self.error(HTTPStatus.UNAUTHORIZED, "Sign in to the officer dashboard.")
             return
         try:
-            if self.path == "/api/state":
+            url = urlsplit(self.path)
+            if url.path == "/api/state":
                 self.respond(HTTPStatus.OK, app.state(csrf))
-            elif match := TEAM_PATH.fullmatch(self.path):
-                self.respond(HTTPStatus.OK, host_request(match[2], slot=int(match[1])))
+            elif match := TEAM_PATH.fullmatch(url.path):
+                params = {"slot": int(match[1]), "username": match[2]}
+                if match[3] == "screen":
+                    query = parse_qs(url.query, strict_parsing=True, max_num_fields=2)
+                    offset, = query.get("offset", ["0"])
+                    token, = query.get("token", [None])
+                    if not re.fullmatch(r"[0-9]{1,10}", offset):
+                        raise ValueError("Invalid screen offset.")
+                    params.update(offset=int(offset), token=token)
+                self.respond(HTTPStatus.OK, host_request(match[3], **params))
             else:
                 self.error(HTTPStatus.NOT_FOUND, "Page not found.")
         except ValueError as exc:
