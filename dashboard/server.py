@@ -138,7 +138,7 @@ class Request(BaseHTTPRequestHandler):
         self.respond(status, {"error": message})
 
     def cookie(self, value, age):
-        flags = "; Secure" if self.server.tls else ""
+        flags = "; Secure" if self.server.origin.startswith("https://") else ""
         return f"workshop_session={value}; Path=/; Max-Age={age}; HttpOnly; SameSite=Strict{flags}"
 
     def session_key(self):
@@ -149,11 +149,15 @@ class Request(BaseHTTPRequestHandler):
             return ""
         return cookie["workshop_session"].value if "workshop_session" in cookie else ""
 
-    def correct_host(self):
-        if self.headers.get("Host") == self.server.host_header:
-            return True
-        self.error(HTTPStatus.MISDIRECTED_REQUEST, "Open the dashboard using its configured address.")
-        return False
+    def allowed_request(self):
+        if self.headers.get("Host") != self.server.host_header:
+            self.error(HTTPStatus.MISDIRECTED_REQUEST, "Open the dashboard using its configured address.")
+            return False
+        login = self.server.tailscale_login
+        if login and self.headers.get_all("Tailscale-User-Login") != [login]:
+            self.error(HTTPStatus.FORBIDDEN, "This Tailscale account cannot access the dashboard.")
+            return False
+        return True
 
     def read_json(self):
         size = int(self.headers.get("Content-Length", "0"))
@@ -165,7 +169,7 @@ class Request(BaseHTTPRequestHandler):
         return data
 
     def do_GET(self):
-        if not self.correct_host():
+        if not self.allowed_request():
             return
         if self.path in FILES:
             name, media = FILES[self.path]
@@ -198,7 +202,7 @@ class Request(BaseHTTPRequestHandler):
             self.error(HTTPStatus.SERVICE_UNAVAILABLE, "The workshop service on Peter is unavailable.")
 
     def do_POST(self):
-        if not self.correct_host():
+        if not self.allowed_request():
             return
         if self.headers.get("Origin") != self.server.origin:
             self.error(HTTPStatus.FORBIDDEN, "Open the dashboard directly in your browser.")
@@ -244,13 +248,14 @@ class Request(BaseHTTPRequestHandler):
 class Server(ThreadingHTTPServer):
     request_queue_size = 32
 
-    def __init__(self, address, dashboard, tls=None, subnet=None):
+    def __init__(self, address, dashboard, tls=None, subnet=None, *, tailscale_host=None, tailscale_login=None):
         self.dashboard = dashboard
         self.tls = tls
         self.subnet = subnet
         self.slots = threading.BoundedSemaphore(32)
-        self.host_header = f"{address[0]}:{address[1]}"
-        self.origin = ("https://" if tls else "http://") + self.host_header
+        self.tailscale_login = tailscale_login
+        self.host_header = tailscale_host or f"{address[0]}:{address[1]}"
+        self.origin = ("https://" if tls or tailscale_host else "http://") + self.host_header
         super().__init__(address, Request)
 
     def verify_request(self, request, client_address):
@@ -280,13 +285,19 @@ class Server(ThreadingHTTPServer):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--lan")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--lan")
+    modes.add_argument("--tailscale", nargs=2, metavar=("HOST", "LOGIN"))
     args = parser.parse_args()
     credentials = Path(os.environ["CREDENTIALS_DIRECTORY"])
     password = (credentials / "officer-password").read_bytes().strip()
     if len(password) < 12:
         raise ValueError("The officer password must contain at least 12 characters.")
     app = Dashboard(password)
+    if args.tailscale:
+        host, login = args.tailscale
+        Server(("127.0.0.1", 18090), app, tailscale_host=host, tailscale_login=login).serve_forever()
+        return
     local = Server(("127.0.0.1", 8090), app)
     if args.lan:
         address = ipaddress.IPv4Interface(args.lan)

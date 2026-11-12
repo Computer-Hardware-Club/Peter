@@ -3,11 +3,25 @@
 set -euo pipefail
 umask 077
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
-if [[ $EUID != 0 || $# -gt 1 || ! -x /opt/workshop/workshop ]]; then
-    echo 'Usage: sudo ./install-dashboard.sh [LAN_IP/PREFIX]' >&2
+usage() {
+    echo 'Usage: sudo ./install-dashboard.sh [LAN_IP/PREFIX | --tailscale HOST LOGIN]' >&2
     exit 2
+}
+if [[ $EUID != 0 || ! -x /opt/workshop/workshop ]]; then
+    usage
 fi
-lan=${1:-}
+lan=
+tail_args=
+if [[ ${1:-} == --tailscale ]]; then
+    if [[ $# != 3 || ! $2 =~ ^[a-z0-9][a-z0-9.-]*\.ts\.net$ ||
+          ! $3 =~ ^[A-Za-z0-9_.+-]+@[A-Za-z0-9_.+-]+$ ]]; then
+        usage
+    fi
+    tail_args="--tailscale $2 $3"
+else
+    [[ $# -le 1 ]] || usage
+    lan=${1:-}
+fi
 ip=$(python3 - "$lan" <<'PY'
 import ipaddress
 import sys
@@ -35,12 +49,29 @@ if [[ $(pwd -P) != /opt/workshop ]]; then
     install -m 0755 install-dashboard.sh /opt/workshop/
 fi
 install -m 0644 infra/workshop-dashboard{.service,-host.socket,-host@.service} /etc/systemd/system/
+guard_dropin=/etc/systemd/system/workshop-dashboard.service.d/tailscale.conf
+if [[ -n $tail_args ]]; then
+    if [[ $(pwd -P) != /opt/workshop ]]; then
+        install -D -m 0644 infra/dashboard-serve.nft /opt/workshop/infra/dashboard-serve.nft
+    fi
+    install -m 0644 infra/workshop-dashboard-serve-guard.service /etc/systemd/system/
+    nft -c -f /opt/workshop/infra/dashboard-serve.nft
+    install -d -m 0755 "${guard_dropin%/*}"
+    cat > "$guard_dropin" <<'UNIT'
+[Unit]
+Requires=workshop-dashboard-serve-guard.service
+After=workshop-dashboard-serve-guard.service
+UNIT
+elif [[ -f $guard_dropin ]]; then
+    unlink "$guard_dropin"
+fi
 cd /etc/workshop/dashboard
 if [[ ! -s officer-password ]]; then
     python3 -c 'import secrets; print(secrets.token_urlsafe(24))' > officer-password
 fi
-if [[ ! -s tls.crt || ! -s tls.key || ! -s lan-ca.crt || ! -s tls-address ||
-      $(cat tls-address) != "$ip" ]] || ! openssl x509 -checkend 2592000 -noout -in tls.crt >/dev/null; then
+if [[ ! -s tls.crt || ! -s tls.key ]] ||
+   { [[ -z $tail_args ]] && { [[ ! -s lan-ca.crt || ! -s tls-address || $(cat tls-address) != "$ip" ]] ||
+       ! openssl x509 -checkend 2592000 -noout -in tls.crt >/dev/null; }; }; then
     temp=$(mktemp -d)
     trap 'rm -rf -- "$temp"' EXIT
     openssl req -new -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -noenc -days 397 \
@@ -57,13 +88,12 @@ if [[ ! -s tls.crt || ! -s tls.key || ! -s lan-ca.crt || ! -s tls-address ||
     install -m 0644 "$temp/ca.crt" lan-ca.crt
     printf '%s\n' "$ip" > tls-address
 fi
-if [[ -n $lan ]]; then
-    printf 'DASHBOARD_LAN_ARGS="--lan %s"\n' "$lan" > listen.env
-else
-    printf 'DASHBOARD_LAN_ARGS=""\n' > listen.env
-fi
+printf 'DASHBOARD_LAN_ARGS="%s"\nDASHBOARD_TAILSCALE_ARGS="%s"\n' "${lan:+--lan $lan}" "$tail_args" > listen.env
 
 systemctl daemon-reload
+if [[ -n $tail_args ]]; then
+    systemctl reload-or-restart workshop-dashboard-serve-guard.service
+fi
 systemctl enable --now workshop-dashboard-host.socket
 systemctl enable workshop-dashboard.service
 systemctl restart workshop-dashboard.service

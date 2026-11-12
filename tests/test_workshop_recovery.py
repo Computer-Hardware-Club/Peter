@@ -1,5 +1,6 @@
 from base64 import b64decode
 from copy import deepcopy
+from http.client import HTTPConnection
 import json
 from pathlib import Path
 import runpy
@@ -18,6 +19,7 @@ provision = workshop["provision"]
 with patch.object(sys, "path", [str(ROOT / "dashboard"), *sys.path]):
     host = runpy.run_path(str(ROOT / "dashboard" / "host.py"))["handle"]
 read_recording = host.__globals__["read_recording"]
+dashboard_server = runpy.run_path(str(ROOT / "dashboard" / "server.py"))
 
 
 class ProvisioningTest(unittest.TestCase):
@@ -166,6 +168,33 @@ class DashboardHostTest(unittest.TestCase):
             credentials = host({"op": "credentials", "slot": 1, "username": team["login"]})
             self.assertEqual(credentials["username"], "1")
             self.assertEqual(credentials["team"], team["login"])
+
+
+class DashboardTailscaleTest(unittest.TestCase):
+    def test_tailscale_identity_is_required_before_sign_in_and_assets(self):
+        server = dashboard_server["Server"](
+            ("127.0.0.1", 0), dashboard_server["Dashboard"](b"fixture-password"),
+            tailscale_host="peter.example.ts.net", tailscale_login="owner@example.test",
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            for identity, expected in ((None, 403), ("other@example.test", 403),
+                                       ("owner@example.test", 200)):
+                with self.subTest(identity=identity):
+                    connection = HTTPConnection(*server.server_address, timeout=3)
+                    try:
+                        headers = {"Host": "peter.example.ts.net"}
+                        if identity:
+                            headers["Tailscale-User-Login"] = identity
+                        connection.request("GET", "/app.js", headers=headers)
+                        self.assertEqual(connection.getresponse().status, expected)
+                    finally:
+                        connection.close()
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
 
 
 class ScreenRecordingTest(unittest.TestCase):

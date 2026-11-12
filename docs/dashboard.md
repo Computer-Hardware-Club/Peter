@@ -1,23 +1,17 @@
 # Officer dashboard
 
-On Peter's LAN, open [the officer dashboard](https://192.168.1.12:8443/) after trusting its local CA. The dashboard also works over an SSH forward, including from a Tailscale client if Peter is joined to the tailnet and reachable over SSH. It uses a separate address and password from the public participant portal.
+Peter’s officer dashboard uses Tailscale Serve. Open Peter’s Tailscale HTTPS hostname from a device signed in with the configured account, then enter the officer password. Other Tailscale identities are denied before the sign-in page. The participant portal has a separate address and login.
 
 Read the officer password over Peter's administrative SSH connection.
 
 ```sh
-ssh -t 192.168.1.12 'sudo cat /etc/workshop/dashboard/officer-password'
+ssh -t YOUR_SERVER 'sudo cat /etc/workshop/dashboard/officer-password'
 ```
 
-For a browser connection without installing a local CA, open an SSH forward and visit [the forwarded dashboard](http://127.0.0.1:8090/). Keep the SSH connection open while using it.
+On a self-hosted server installed in SSH-forwarding mode, open an SSH forward and visit [the forwarded dashboard](http://127.0.0.1:8090/). Keep the SSH connection open while using it.
 
 ```sh
-ssh -N -L 127.0.0.1:8090:127.0.0.1:8090 192.168.1.12
-```
-
-For direct LAN access, retrieve the public CA certificate over the same SSH connection. On macOS, import it into your login keychain and set its SSL trust in Keychain Access. Verify that the certificate came from Peter before trusting it. The LAN certificate is valid for one year. When the installer issues a replacement, import its new CA.
-
-```sh
-ssh 192.168.1.12 'sudo -n cat /etc/workshop/dashboard/lan-ca.crt' > peter-workshop-ca.crt
+ssh -N -L 127.0.0.1:8090:127.0.0.1:8090 YOUR_SERVER
 ```
 
 ## Run a workshop
@@ -35,6 +29,16 @@ If the participant portal is unavailable, the dashboard still shows the VM roste
 
 ## Install or restore
 
-Install the workshop platform first, then run `sudo ./install-dashboard.sh 192.168.1.12/24` from a trusted checkout. Substitute the replacement host's LAN address and subnet. Omit the address to enable SSH forwarding only. The installer retains the existing officer password. Keep this dashboard off the public Cloudflare tunnel.
+Install the workshop platform first. From a trusted checkout on a host already connected to Tailscale, run the following with the hostname and allowed login from `tailscale status --json`.
+
+```sh
+sudo ./install-dashboard.sh --tailscale YOUR_HOST.YOUR_TAILNET.ts.net YOUR_LOGIN
+sudo tailscale serve --bg --https=443 http://127.0.0.1:18090
+sudo tailscale serve status
+```
+
+The Serve status should say **tailnet only**. This mode disables the old LAN and SSH dashboard listeners and permits only Tailscale’s privileged daemon to reach the loopback backend. Keep the dashboard off Funnel and the public Cloudflare tunnel. See the [Tailscale Serve documentation](https://tailscale.com/docs/features/tailscale-serve) for HTTPS setup and how it forwards the account identity.
+
+For SSH forwarding on a self-hosted server, run `sudo ./install-dashboard.sh` with no arguments. For optional LAN HTTPS, pass the LAN address and prefix, then retrieve and trust the server’s local CA at `/etc/workshop/dashboard/lan-ca.crt`. The installer retains the existing officer password in all three modes.
 
 Check both services with `sudo systemctl status workshop-dashboard.service workshop-dashboard-host.socket`. To rotate the officer password, replace `/etc/workshop/dashboard/officer-password` with a new secret of at least 12 characters and restart the dashboard. Existing officer sessions end when the service restarts.

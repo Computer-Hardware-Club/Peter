@@ -1,0 +1,9 @@
+[Unit]
+Description=Restrict the dashboard proxy backend to Tailscale's privileged daemon
+Before=workshop-dashboard.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/nft -f /opt/workshop/infra/dashboard-serve.nft
+ExecReload=/usr/sbin/nft -f /opt/workshop/infra/dashboard-serve.nft
+RemainAfterExit=yes

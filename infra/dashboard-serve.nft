@@ -1,0 +1,10 @@
+# Tailscale Serve connects to this backend as root. Block direct access
+# from other local users, including through ordinary SSH port forwards.
+add table inet workshop_dashboard
+flush table inet workshop_dashboard
+table inet workshop_dashboard {
+    chain output {
+        type filter hook output priority -10; policy accept;
+        ip daddr 127.0.0.1 tcp dport 18090 meta skuid != 0 reject with tcp reset
+    }
+}

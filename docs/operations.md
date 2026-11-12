@@ -4,7 +4,7 @@
 
 | Component | Location |
 | --- | --- |
-| Officer dashboard | `https://192.168.1.12:8443/` on the LAN or SSH forwarding to loopback TCP 8090 |
+| Officer dashboard | [Private Tailscale HTTPS on Peter](dashboard.md). Self-hosted servers can also use SSH forwarding. |
 | Officer command | `/usr/local/sbin/workshop` |
 | Root-owned install | `/opt/workshop` |
 | Incus VM project and directory storage pool | `workshop` |
@@ -72,7 +72,7 @@ Keep the exported files together. Treat images with custom material as private. 
 
 On an audited bare-metal Ubuntu 24.04 amd64 replacement with KVM, verify the workshop ranges and interface names in `infra/firewall.nft`, `infra/compose.yaml`, and `workshop` are available. The workshop uses `10.241.1.0/30` through `10.241.4.0/30`, `172.31.253.0/28`, `172.31.253.16/28`, `wks1`–`wks4`, `wks-guac`, and loopback TCP port 8080. Preserve the replacement host’s management network and existing firewall.
 
-1. Transfer a trusted checkout of this repository. Run `sudo ./install.sh` from that checkout. It installs packages, the root-owned configuration, the default image, and the systemd units. It generates stack passwords on the host. Re-running the installer restarts the portal. Run `sudo ./install-dashboard.sh LAN_IP/PREFIX` to restore the officer dashboard.
+1. Transfer a trusted checkout of this repository. Run `sudo ./install.sh` from that checkout. It installs packages, the root-owned configuration, the default image, and the systemd units. It generates stack passwords on the host. Re-running the installer restarts the portal. Follow the [officer dashboard setup](dashboard.md#install-or-restore) to restore your chosen access mode.
 2. Rebuild custom aliases from the documented packages, or import the trusted exported VM image into the `workshop` project with its original alias. Restore its manifest in `/opt/workshop/templates/`.
 3. Reissue the Cloudflare Tunnel token or retrieve it from the administrator’s protected secret store. Install it and follow the [Cloudflare handoff](cloudflare.md).
 4. Deploy a small test event, confirm browser SSH and isolation, then destroy it. Deploy the real event and distribute fresh credentials.
