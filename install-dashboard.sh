@@ -38,9 +38,6 @@ cd /etc/workshop/dashboard
 if [[ ! -s officer-password ]]; then
     python3 -c 'import secrets; print(secrets.token_urlsafe(24))' > officer-password
 fi
-if [[ ! -s smtp.json ]]; then
-    printf '{}\n' > smtp.json
-fi
 if [[ ! -s tls.crt || ! -s tls.key || ! -s lan-ca.crt || ! -s tls-address ||
       $(cat tls-address) != "$ip" ]] || ! openssl x509 -checkend 2592000 -noout -in tls.crt >/dev/null; then
     temp=$(mktemp -d)

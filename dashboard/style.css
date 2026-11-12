@@ -275,7 +275,7 @@ dialog::backdrop { background: #14282388; }
 .dialog-body > .muted { margin-top: .45rem; font-size: .88rem; }
 .dialog-heading { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
 .close-button { min-height: 2rem; padding: .25rem .5rem; font-size: 1.25rem; }
-.dialog-actions, .invite-actions { display: flex; gap: .55rem; flex-wrap: wrap; margin-top: .85rem; }
+.dialog-actions { display: flex; gap: .55rem; flex-wrap: wrap; margin-top: .85rem; }
 .dialog-actions { justify-content: flex-end; }
 .credential-list {
   display: grid;
@@ -294,9 +294,6 @@ dialog::backdrop { background: #14282388; }
   overflow-wrap: anywhere;
   user-select: all;
 }
-#invite-form { margin-top: .9rem; padding-top: .8rem; border-top: 1px solid var(--line); }
-#invite-form h3 { margin-bottom: .55rem; }
-.invite-note { margin-top: .35rem; font-size: .78rem; }
 .toast {
   position: fixed;
   z-index: 1;

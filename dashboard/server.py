@@ -3,7 +3,6 @@
 
 import argparse
 from collections import deque
-from email.message import EmailMessage
 from http import HTTPStatus
 from http.cookies import SimpleCookie, CookieError
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -13,7 +12,6 @@ import os
 from pathlib import Path
 import re
 import secrets
-import smtplib
 import socket
 import ssl
 import threading
@@ -21,7 +19,6 @@ import time
 
 ASSETS = Path(__file__).resolve().parent
 SOCKET = "/run/workshop-dashboard-host.sock"
-MAILBOX = re.compile(r"[A-Za-z0-9_+.-]+@oregonstate\.edu", re.IGNORECASE)
 TEAM_PATH = re.compile(r"/api/team/([1-4])/(credentials|transcript)")
 FILES = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascript"),
          "/style.css": ("style.css", "text/css")}
@@ -43,43 +40,13 @@ def host_request(op, **data):
     return result
 
 
-def send_invite(mail, email, team):
-    message = EmailMessage()
-    message["From"] = mail["sender"]
-    message["To"] = email
-    message["Subject"] = "Your Computer Hardware Club workshop login"
-    message.set_content(
-        f"Open {team['portal']} and sign in with a code sent to your OSU email.\n\n"
-        f"Team username: {team['username']}\n"
-        f"Team password: {team['password']}\n\n"
-        "One teammate can use the terminal at a time. Workshop officers can view "
-        "terminal output to help troubleshoot.\n"
-    )
-    tls = ssl.create_default_context()
-    mode = mail.get("security", "starttls")
-    if mode == "tls":
-        client = smtplib.SMTP_SSL(mail["host"], mail.get("port", 465), context=tls, timeout=10)
-    elif mode == "starttls":
-        client = smtplib.SMTP(mail["host"], mail.get("port", 587), timeout=10)
-    else:
-        raise ValueError("SMTP must use TLS or STARTTLS.")
-    with client:
-        if mode == "starttls":
-            client.starttls(context=tls)
-        if mail.get("username"):
-            client.login(mail["username"], mail["password"])
-        client.send_message(message)
-
-
 class Dashboard:
-    def __init__(self, password, mail):
+    def __init__(self, password):
         self.password = password
-        self.mail = mail
         self.lock = threading.Lock()
         self.sessions = {}
         self.failures = deque(maxlen=24)
         self.job = None
-        self.invitations = deque(maxlen=24)
 
     def login(self, password):
         with self.lock:
@@ -139,28 +106,7 @@ class Dashboard:
         with self.lock:
             job = self.job
         result = host_request("state")
-        return {**result, "csrf": csrf, "job": job, "mailConfigured": bool(self.mail)}
-
-    def invite(self, data):
-        email = data.get("email")
-        if not isinstance(email, str) or len(email) > 254 or not MAILBOX.fullmatch(email):
-            raise ValueError("Enter a valid @oregonstate.edu email address.")
-        if not self.mail:
-            raise ValueError("SMTP is not configured. Open a draft in your email app.")
-        with self.lock:
-            now = time.monotonic()
-            while self.invitations and self.invitations[0] < now - 60:
-                self.invitations.popleft()
-            if len(self.invitations) >= 24:
-                raise PermissionError("Invite limit reached. Wait one minute.")
-            self.invitations.append(now)
-        team = host_request("credentials", slot=data.get("slot"))
-        if data.get("username") != team["username"]:
-            raise ValueError("That team changed. Open its new invitation before sending.")
-        try:
-            send_invite(self.mail, email, team)
-        except (OSError, smtplib.SMTPException, KeyError):
-            raise ValueError("The mail server did not accept the invitation. Check SMTP settings.") from None
+        return {**result, "csrf": csrf, "job": job}
 
 
 class Request(BaseHTTPRequestHandler):
@@ -269,9 +215,6 @@ class Request(BaseHTTPRequestHandler):
                     self.respond(HTTPStatus.ACCEPTED, {})
                 else:
                     self.error(HTTPStatus.CONFLICT, "Another workshop action is in progress.")
-            elif self.path == "/api/invite":
-                app.invite(data)
-                self.respond(HTTPStatus.OK, {})
             elif self.path == "/api/logout":
                 app.logout(key)
                 self.respond(HTTPStatus.OK, {}, cookie=self.cookie("", 0))
@@ -328,12 +271,9 @@ def main():
     args = parser.parse_args()
     credentials = Path(os.environ["CREDENTIALS_DIRECTORY"])
     password = (credentials / "officer-password").read_bytes().strip()
-    if len(password) < 16:
-        raise ValueError("The officer password must contain at least 16 characters.")
-    mail = json.loads((credentials / "smtp.json").read_text())
-    if not isinstance(mail, dict):
-        raise ValueError("SMTP configuration must be a JSON object.")
-    app = Dashboard(password, mail)
+    if len(password) < 12:
+        raise ValueError("The officer password must contain at least 12 characters.")
+    app = Dashboard(password)
     local = Server(("127.0.0.1", 8090), app)
     if args.lan:
         address = ipaddress.IPv4Interface(args.lan)

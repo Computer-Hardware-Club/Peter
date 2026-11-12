@@ -105,7 +105,7 @@
                 <p id="team-subtitle" class="muted"></p>
               </div>
               <div class="team-actions">
-                <button class="button secondary compact" type="button" id="open-credentials">Credentials &amp; invite</button>
+                <button class="button secondary compact" type="button" id="open-credentials">Team login</button>
                 <button class="button secondary compact" type="button" id="reset-team" data-action-control>Reset VM</button>
               </div>
             </div>
@@ -159,19 +159,8 @@
           <dt>Username</dt><dd id="team-username"></dd>
           <dt>Password</dt><dd id="team-password"></dd>
         </dl>
-        <button class="button secondary compact" id="copy-credentials" type="button">Copy credentials</button>
+        <button class="button secondary compact" id="copy-credentials" type="button">Copy team login</button>
 
-        <form id="invite-form">
-          <h3>Invite a participant</h3>
-          <label for="invite-email">Email address</label>
-          <input id="invite-email" type="email" name="email" maxlength="254" placeholder="student@oregonstate.edu" required>
-          <p class="muted invite-note" id="invite-note"></p>
-          <div class="invite-actions">
-            <button class="button primary" id="send-invite" type="button">Send invite</button>
-            <button class="button secondary" id="draft-invite" type="button">Open email draft</button>
-          </div>
-          <p id="invite-result" class="form-error" role="status" hidden></p>
-        </form>
       </div>
     </div>
   </dialog>

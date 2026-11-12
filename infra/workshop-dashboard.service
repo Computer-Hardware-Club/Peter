@@ -9,7 +9,6 @@ User=workshop-dashboard
 Group=workshop-dashboard
 EnvironmentFile=/etc/workshop/dashboard/listen.env
 LoadCredential=officer-password:/etc/workshop/dashboard/officer-password
-LoadCredential=smtp.json:/etc/workshop/dashboard/smtp.json
 LoadCredential=tls.crt:/etc/workshop/dashboard/tls.crt
 LoadCredential=tls.key:/etc/workshop/dashboard/tls.key
 ExecStart=/usr/bin/python3 /opt/workshop/dashboard/server.py $DASHBOARD_LAN_ARGS

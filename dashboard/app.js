@@ -16,7 +16,6 @@ const model = {
   pendingAction: null,
   credentials: null,
   credentialRevision: 0,
-  invitePending: false,
   toastTimer: null,
 };
 
@@ -74,7 +73,6 @@ function signInScreen(error = "") {
   model.viewRevision += 1;
   model.pendingAction = null;
   model.submitting = false;
-  model.invitePending = false;
   model.roster.clear();
   $("team-list").replaceChildren();
   $("terminal-output").textContent = "";
@@ -199,7 +197,7 @@ function renderTeam(team, busy) {
 
 function renderState() {
   if (!model.state) return;
-  const { event, templates, job, portal, mailConfigured } = model.state;
+  const { event, templates, job, portal } = model.state;
   const teams = [...(event?.teams || [])].sort((left, right) => left.slot - right.slot);
   const live = teams.filter((team) => team.active).length;
   const ready = teams.filter((team) => team.ready).length;
@@ -237,10 +235,6 @@ function renderState() {
   $("roster-summary").textContent = `${ready} of ${teams.length} ready`;
   renderRoster(teams);
   renderTeam(getTeam(), busy);
-  $("send-invite").hidden = !mailConfigured;
-  $("invite-note").textContent = mailConfigured
-    ? "The invitation includes the team username and password."
-    : "Open a draft in your email app. Review it before sending.";
   if (model.credentials) {
     const team = getTeam(model.credentials.slot);
     if (!team?.ready || team.username !== model.credentials.username) closeCredentials();
@@ -342,16 +336,11 @@ function confirmAction(payload, title, copy, submit) {
 function resetCredentialView() {
   model.credentialRevision += 1;
   model.credentials = null;
-  model.invitePending = false;
   $("credentials-content").hidden = true;
   $("credentials-title").textContent = "";
   $("credentials-message").textContent = "";
   $("team-username").textContent = "";
   $("team-password").textContent = "";
-  $("invite-form").reset();
-  $("invite-email").setCustomValidity("");
-  $("send-invite").disabled = false;
-  setFormMessage($("invite-result"), "");
 }
 
 function closeCredentials() {
@@ -384,61 +373,6 @@ async function openCredentials(slot) {
     if (revision !== model.credentialRevision) return;
     if (error.status === 401) signInScreen("Your session ended. Sign in again.");
     else $("credentials-message").textContent = error.message;
-  }
-}
-
-function inviteEmail() {
-  const input = $("invite-email");
-  const email = input.value.trim();
-  input.setCustomValidity(email && !/@oregonstate\.edu$/i.test(email)
-    ? "Enter an @oregonstate.edu email address." : "");
-  return input.reportValidity() ? email : "";
-}
-
-function draftInvitation() {
-  const email = inviteEmail();
-  const credentials = model.credentials;
-  if (!email || !credentials) return;
-  const subject = `Computer Hardware Club workshop · Team ${credentials.slot}`;
-  const body = [
-    "You're invited to the Computer Hardware Club workshop.",
-    "",
-    `Open ${credentials.portal} and sign in using the code sent to your @oregonstate.edu email.`,
-    "At the Guacamole sign-in page, use your team credentials:",
-    "",
-    `Username: ${credentials.username}`,
-    `Password: ${credentials.password}`,
-    "",
-    "Your team can use one browser terminal at a time.",
-    "Workshop officers can view terminal output for troubleshooting.",
-  ].join("\n");
-  const recipient = encodeURIComponent(email).replace("%40", "@");
-  window.location.href = `mailto:${recipient}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-}
-
-async function sendInvitation() {
-  if (model.invitePending || !model.state?.mailConfigured) return;
-  const email = inviteEmail();
-  const credentials = model.credentials;
-  if (!email || !credentials) return;
-  const revision = model.credentialRevision;
-  model.invitePending = true;
-  $("send-invite").disabled = true;
-  setFormMessage($("invite-result"), "Sending invitation…", true);
-  try {
-    await api("/api/invite", { slot: credentials.slot, username: credentials.username, email });
-    if (revision !== model.credentialRevision) return;
-    $("invite-email").value = "";
-    setFormMessage($("invite-result"), `Invitation sent to ${email}.`, true);
-  } catch (error) {
-    if (revision !== model.credentialRevision) return;
-    if (error.status === 401) signInScreen("Your session ended. Sign in again.");
-    else setFormMessage($("invite-result"), error.message);
-  } finally {
-    if (revision === model.credentialRevision) {
-      model.invitePending = false;
-      $("send-invite").disabled = false;
-    }
   }
 }
 
@@ -524,15 +458,11 @@ $("copy-credentials").addEventListener("click", async () => {
       `Username: ${credentials.username}`,
       `Password: ${credentials.password}`,
     ].join("\n"));
-    if (credentials === model.credentials) $("credentials-message").textContent = "Copied team credentials.";
+    if (credentials === model.credentials) $("credentials-message").textContent = "Copied the workshop link and team login.";
   } catch {
     if (credentials === model.credentials) $("credentials-message").textContent = "Select the username and password to copy them.";
   }
 });
-$("invite-form").addEventListener("submit", (event) => event.preventDefault());
-$("invite-email").addEventListener("input", (event) => event.currentTarget.setCustomValidity(""));
-$("send-invite").addEventListener("click", sendInvitation);
-$("draft-invite").addEventListener("click", draftInvitation);
 
 async function poll() {
   if (model.mode === "dashboard" && !document.hidden) {

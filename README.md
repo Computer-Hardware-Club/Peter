@@ -4,7 +4,7 @@ Peter runs a single workshop at a time with one to four Debian 13 KVM virtual ma
 
 ## Officer quick start
 
-Use the [officer dashboard](docs/dashboard.md) to start a workshop, add or remove teams, retrieve credentials, send invitations, view terminal output, or refresh a VM. The dashboard starts from the standard Debian `test-vm` image.
+Use the [officer dashboard](docs/dashboard.md) to start a workshop, add or remove teams, copy team logins, view terminal output, or refresh a VM. The dashboard starts from the standard Debian `test-vm` image.
 
 The same operations are available in your administrative SSH session on Peter.
 
