@@ -9,6 +9,7 @@ import threading
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+from workshop_templates import load_template, team_limit
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -49,7 +50,7 @@ class ProvisioningTest(unittest.TestCase):
         commands = []
         reset = workshop["reset"]
         with patch.dict(reset.__globals__, {
-            "check_host": lambda _: None,
+            "check_host": lambda *_: None,
             "provision": lambda event, slots, **options: commands.append((slots, options)),
         }):
             reset(event, 1)
@@ -89,7 +90,7 @@ class ProvisioningTest(unittest.TestCase):
             if all(snapshot["teams"][slot - 1]["ready"] for slot in (1, 3, 4)):
                 others_ready.set()
 
-        def wait_for_ssh(slot):
+        def wait_for_ssh(slot, require_init=False):
             if slot == 2:
                 if not others_ready.wait(timeout=3):
                     raise AssertionError("Other teams were blocked by Team 2")
@@ -179,6 +180,45 @@ class ScreenRecordingTest(unittest.TestCase):
             self.assertNotEqual(current["token"], first["token"])
             self.assertEqual(current["offset"], 3)
             self.assertEqual(b64decode(current["data"]), b"new")
+
+
+class TemplateTest(unittest.TestCase):
+    def test_example_resources_and_script_are_applied_at_guest_creation(self):
+        template = load_template(ROOT / "templates", "hello-lab")
+        create = workshop["create_guest"]
+        calls = []
+        event = {"run": "a" * 16, "image": "b" * 64, "resources": template["resources"],
+                 "init": template["init"]}
+        with patch.dict(create.__globals__, {"incus": lambda *args: calls.append(args)}):
+            create(1, event, "ssh-ed25519 test-key")
+        self.assertIn("limits.cpu=1", calls[0])
+        self.assertIn("limits.memory=1024MiB", calls[0])
+        self.assertIn(("config", "device", "override", "ws-team-1", "root", "size=12GiB"), calls)
+        encoded = next(arg for arg in calls[0] if arg.startswith("cloud-init.user-data="))
+        config = json.loads(encoded.split("\n", 1)[1])
+        script = next(file for file in config["write_files"] if file["path"].endswith("/init.sh"))
+        self.assertEqual(script["content"], template["init"])
+        self.assertIn("bash -e /usr/local/lib/workshop/init.sh", config["runcmd"][-1][-1])
+
+    def test_failed_initializer_prevents_portal_readiness(self):
+        wait = workshop["wait_for_ssh"]
+        with patch.dict(wait.__globals__, {"incus": lambda *a, **k: "workshop-init-failed"}):
+            with self.assertRaisesRegex(RuntimeError, "init.sh failed"):
+                wait(1, require_init=True)
+
+    def test_manifest_validates_resource_types_and_bounds_teams(self):
+        with TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            folder = directory / "lab"
+            folder.mkdir()
+            manifest = folder / "workshop.json"
+            data = {"version": 1, "description": "Lab", "resources": {"vcpus": 3, "memory_mib": 2048}}
+            manifest.write_text(json.dumps(data))
+            self.assertEqual(team_limit(load_template(directory, "lab")["resources"]), 2)
+            data["resources"]["vcpus"] = True
+            manifest.write_text(json.dumps(data))
+            with self.assertRaisesRegex(ValueError, "vcpus must be an integer"):
+                load_template(directory, "lab")
 
 
 if __name__ == "__main__":

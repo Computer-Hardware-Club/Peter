@@ -18,11 +18,12 @@ import time
 import urllib.error
 import urllib.request
 
+from workshop_templates import DEFAULT_RESOURCES, SLUG, load_template, portal_url, team_limit
+
 HOME_DIR = Path(__file__).resolve().parent
 STATE_DIR = Path("/var/lib/workshop")
 STATE_FILE = STATE_DIR / "event.json"
 POOL_DIR = Path("/var/lib/incus/storage-pools/workshop")
-PORTAL = "https://workshop.computerhardwareclub.org/"
 GUACD_IP = "172.31.253.4"
 OWNER_KEY = "user.workshop.run"
 TEAM_SLOTS = range(1, 5)
@@ -34,7 +35,6 @@ TERMINAL_PALETTE = (
     "color9:rgb:ff/90/96;color10:rgb:b8/e3/88;color11:rgb:ff/b9/81;"
     "color12:rgb:a1/bb/ff;color13:rgb:d5/b5/ff;color14:rgb:a1/e9/f3;color15:rgb:f2/f2/ee"
 )
-SLUG = re.compile(r"[a-z][a-z0-9-]{0,23}")
 FINGERPRINT = re.compile(r"[0-9a-f]{64}")
 
 
@@ -125,13 +125,14 @@ def require_owner(resource, name, event):
         raise RuntimeError(f"Refusing to modify {name}: ownership does not match this event.")
 
 
-def check_host(slots):
+def check_host(slots, disk_gib=DEFAULT_RESOURCES["disk_gib"]):
     run("systemctl", "is-active", "--quiet", "workshop-firewall.service")
     run("nft", "list", "table", "inet", "workshop")
     run("nft", "list", "table", "bridge", "workshop")
     free = shutil.disk_usage(POOL_DIR).free
-    if free < (16 + 10 * slots) * 1024**3:
-        raise RuntimeError(f"Need at least {16 + 10 * slots} GiB free for VM disks and host reserve.")
+    required_gib = 16 + disk_gib * slots
+    if free < required_gib * 1024**3:
+        raise RuntimeError(f"Need at least {required_gib} GiB free for VM disks and host reserve.")
     if db("SELECT count(*) FROM guacamole_system_permission;") != "0":
         raise RuntimeError("Unexpected Guacamole system permissions. Check portal administration.")
 
@@ -150,6 +151,7 @@ def create_bridge(slot, event):
 def create_guest(slot, event, public_key):
     name, bridge, address, gateway = identity(slot)
     user = f"team-{slot}"
+    resources = event.get("resources", DEFAULT_RESOURCES)
     mac = f"02:77:6b:73:00:{slot:02x}"
     # Use a single narrow return route for SSH and no default gateway or DNS.
     network = {
@@ -194,30 +196,51 @@ def create_guest(slot, event, public_key):
         ],
         "runcmd": [["systemctl", "restart", "ssh.service"]],
     }
+    if script := event.get("init"):
+        user_data["write_files"].append({
+            "path": "/usr/local/lib/workshop/init.sh",
+            "permissions": "0700",
+            "content": script,
+        })
+        user_data["runcmd"].append([
+            "/bin/bash", "-ec",
+            "cd /root; /bin/bash -e /usr/local/lib/workshop/init.sh; "
+            "install -d /var/lib/workshop; touch /var/lib/workshop/init-complete",
+        ])
     incus(
         "init", event["image"], name, "--vm", "--profile", "workshop-vm",
+        "--config", f"limits.cpu={resources['vcpus']}",
+        "--config", f"limits.memory={resources['memory_mib']}MiB",
         "--config", f"{OWNER_KEY}={event['run']}",
         "--config", "cloud-init.network-config=" + json.dumps(network),
         "--config", "cloud-init.user-data=#cloud-config\n" + json.dumps(user_data),
     )
+    if resources["disk_gib"] != DEFAULT_RESOURCES["disk_gib"]:
+        incus("config", "device", "override", name, "root", f"size={resources['disk_gib']}GiB")
     incus("config", "device", "add", name, "eth0", "nic", f"network={bridge}",
           "name=eth0", f"hwaddr={mac}")
     incus("start", name)
 
 
-def wait_for_ssh(slot):
+def wait_for_ssh(slot, require_init=False):
     name, _, address, _ = identity(slot)
+    init_check = (
+        "if [ ! -f /var/lib/workshop/init-complete ]; then echo workshop-init-failed; exit 0; fi; "
+        if require_init else ""
+    )
     deadline = time.monotonic() + 180
     while time.monotonic() < deadline:
         try:
             output = incus(
                 "exec", name, "--", "bash", "-ec",
-                "test -f /var/lib/cloud/instance/boot-finished; "
+                "test -f /var/lib/cloud/instance/boot-finished; " + init_check +
                 f"sudo -n -u team-{slot} sudo -n true; "
                 "test \"$(sshd -T | awk '/^hostkeyalgorithms / {print $2}')\" = ssh-ed25519; "
                 "ssh-keyscan -T 2 -t ed25519 127.0.0.1 2>/dev/null",
                 timeout=8,
             )
+            if output == "workshop-init-failed":
+                raise RuntimeError(f"{name}: init.sh failed. Check /var/log/cloud-init-output.log inside the VM.")
             keys = [line.split()[1:] for line in output.splitlines() if not line.startswith("#")]
             if len(keys) == 1 and len(keys[0]) == 2 and keys[0][0] == "ssh-ed25519":
                 # From the real proxy namespace, so this checks the actual firewall path.
@@ -332,7 +355,7 @@ def provision_team(slot, event, key, replacing):
         create_bridge(slot, event)
     run("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key))
     create_guest(slot, event, key.with_suffix(".pub").read_text().strip())
-    host_key = wait_for_ssh(slot)
+    host_key = wait_for_ssh(slot, require_init=bool(event.get("init")))
     grant_access(slot, team, key.read_text(), host_key, retained)
 
 
@@ -372,8 +395,8 @@ def provision(event, slots, replacing=False):
         raise RuntimeError(f"Could not prepare team(s) {numbers}. Retry those teams individually.")
 
 
-def check_available(slots):
-    check_host(len(slots))
+def check_available(slots, resources):
+    check_host(len(slots), resources["disk_gib"])
     existing_guests, existing_networks = guests(), networks()
     for slot in slots:
         name, bridge, _, _ = identity(slot)
@@ -381,26 +404,40 @@ def check_available(slots):
             raise RuntimeError(f"Reserved name {name} or {bridge} is already in use.")
 
 
+def validated_template(name):
+    template = load_template(HOME_DIR / "templates", name)
+    if template["init"]:
+        run("bash", "-n", input_text=template["init"], timeout=5)
+    return template
+
+
+def require_team_capacity(count, resources):
+    limit = team_limit(resources)
+    if count > limit:
+        raise RuntimeError(f"These VM resources allow at most {limit} team(s) within the project limits.")
+
+
 def deploy(args):
     if load_event():
         raise RuntimeError("An event already exists. Use add, status, reset, or destroy.")
     if not SLUG.fullmatch(args.name) or not SLUG.fullmatch(args.template):
         raise RuntimeError("Event and template names must be lowercase slugs of up to 24 characters.")
-    template_path = HOME_DIR / "templates" / f"{args.template}.json"
-    if not template_path.is_file():
-        raise RuntimeError(f"Template {args.template} does not exist.")
-    template = json.loads(template_path.read_text())
+    template = validated_template(args.template)
+    resources = template["resources"]
+    require_team_capacity(args.teams, resources)
     image = next((
         item["fingerprint"] for item in json.loads(incus("image", "list", "--format", "json"))
         if item["type"] == "virtual-machine"
         and any(alias["name"] == template["image"] for alias in item["aliases"] or [])
     ), "")
     if not FINGERPRINT.fullmatch(image):
-        raise RuntimeError("The template image alias must point to a local virtual-machine image.")
+        raise RuntimeError(f"Template image {template['image']} is not installed. "
+                           "Build a package template with sudo workshop build-template NAME.")
     slots = range(1, args.teams + 1)
-    check_available(slots)
+    check_available(slots, resources)
     event = {
         "name": args.name, "run": secrets.token_hex(8), "template": args.template, "image": image,
+        "resources": resources, "init": template["init"],
     }
     event["teams"] = [new_team(event, slot) for slot in slots]
     provision(event, slots)
@@ -408,10 +445,12 @@ def deploy(args):
 
 def add_team(event):
     current = team_slots(event)
+    resources = event.get("resources", DEFAULT_RESOURCES)
+    require_team_capacity(len(current) + 1, resources)
     slot = next((slot for slot in TEAM_SLOTS if slot not in current), None)
     if slot is None:
         raise RuntimeError("This event already has four teams.")
-    check_available([slot])
+    check_available([slot], resources)
     if slot > len(event["teams"]):
         event["teams"].append(new_team(event, slot))
     else:
@@ -441,7 +480,7 @@ def reset(event, slot, keep_password=True):
     slots = [slot] if slot else list(active)
     if not slots:
         raise RuntimeError("There are no teams to reset. Add a team first.")
-    check_host(len(slots))
+    check_host(len(slots), event.get("resources", DEFAULT_RESOURCES)["disk_gib"])
     teams = [active[number] for number in slots]
     for team in teams:
         team["ready"] = False
@@ -545,10 +584,24 @@ def main():
     replacement.add_argument("--expect-login", help=argparse.SUPPRESS)
     commands.add_parser("credentials").add_argument("--team", type=int, choices=TEAM_SLOTS,
                                                     required=True)
+    commands.add_parser("validate-template").add_argument("template")
+    commands.add_parser("build-template").add_argument("template")
     args = parser.parse_args()
+    if args.action == "validate-template":
+        template = validated_template(args.template)
+        print(f"{args.template}: valid template; image {template['image']}; "
+              f"up to {team_limit(template['resources'])} team(s)")
+        return
     if os.geteuid() != 0:
         parser.error("run workshop with sudo on Peter")
     os.umask(0o077)
+    if args.action == "build-template":
+        template = validated_template(args.template)
+        if not template["packages"]:
+            raise ValueError(f"Template {args.template} declares no packages to build.")
+        result = subprocess.run([str(HOME_DIR / "build-template.sh"), template["image"],
+                                 *template["packages"]])
+        sys.exit(result.returncode)
     if args.action in {"status", "list"}:
         status(load_event())
         return
@@ -585,7 +638,7 @@ def main():
             team = event["teams"][args.team - 1]
             if not team["ready"]:
                 raise RuntimeError("That team's portal access is pending. Check status or reset.")
-            print(f"URL: {PORTAL}\nUsername: {team.get('portal_login', team['login'])}\nPassword: {team['password']}")
+            print(f"URL: {portal_url()}\nUsername: {team.get('portal_login', team['login'])}\nPassword: {team['password']}")
 
 
 if __name__ == "__main__":
@@ -595,6 +648,6 @@ if __name__ == "__main__":
         print(f"workshop: {error.stderr.strip() or error.cmd[0] + ' command failed'}",
               file=sys.stderr)
         sys.exit(1)
-    except (RuntimeError, OSError, subprocess.TimeoutExpired) as error:
+    except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired) as error:
         print(f"workshop: {error}", file=sys.stderr)
         sys.exit(1)

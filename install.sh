@@ -23,9 +23,18 @@ install -d -m 0700 /var/lib/workshop /etc/workshop
 # A checked-out copy may already be in the installation directory.
 if [[ $(pwd -P) != /opt/workshop ]]; then
     install -m 0755 workshop install.sh build-template.sh /opt/workshop/
+    install -m 0644 workshop_templates.py /opt/workshop/
     install -m 0644 infra/* /opt/workshop/infra/
     chmod 0755 /opt/workshop/infra/db-init.sh
     install -m 0644 templates/*.json /opt/workshop/templates/
+    for manifest in templates/*/workshop.json; do
+        [[ -f $manifest ]] || continue
+        install -D -m 0644 "$manifest" "/opt/workshop/$manifest"
+        init_script="${manifest%/*}/init.sh"
+        if [[ -f $init_script ]]; then
+            install -D -m 0644 "$init_script" "/opt/workshop/$init_script"
+        fi
+    done
     install -m 0644 guest/workshop-login.sh /opt/workshop/guest/
     install -m 0755 guest/chcfetch /opt/workshop/guest/
     install -m 0644 portal-reset/{guac-manifest.json,reset.js,reset.css} /opt/workshop/portal-reset/
@@ -75,6 +84,9 @@ if ! incus --project workshop image info debian-trixie >/dev/null 2>&1; then
 fi
 
 if [[ ! -s /var/lib/workshop/stack.env ]]; then
+    if [[ ! -e /etc/workshop/portal-url ]]; then
+        printf '%s\n' 'http://127.0.0.1:18080/' > /etc/workshop/portal-url
+    fi
     if docker volume inspect workshop_database >/dev/null 2>&1; then
         echo 'Restore stack.env before starting the existing workshop database.' >&2
         exit 1

@@ -9,10 +9,11 @@ import sys
 
 from mirror import read_recording
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from workshop_templates import DEFAULT_RESOURCES, SLUG, load_template, portal_url, team_limit, template_names
+
 INSTALL = Path("/opt/workshop")
 EVENT = Path("/var/lib/workshop/event.json")
-PORTAL = "https://workshop.computerhardwareclub.org/"
-SLUG = re.compile(r"[a-z][a-z0-9-]{0,23}")
 LOGIN = re.compile(r"[a-z][a-z0-9-]{0,23}-[0-9a-f]{8}-team-[1-4](?:-[0-9a-f]{8})?")
 
 
@@ -30,14 +31,15 @@ def catalog():
                             "image", "list", "--format", "json", timeout=3))
     aliases = {alias["name"] for image in images if image["type"] == "virtual-machine"
                for alias in image["aliases"] or []}
-    for path in sorted((INSTALL / "templates").glob("*.json")):
+    directory = INSTALL / "templates"
+    for name in template_names(directory):
         try:
-            data = json.loads(path.read_text())
+            template = load_template(directory, name)
         except (OSError, ValueError):
             continue
-        if (isinstance(data, dict) and SLUG.fullmatch(path.stem)
-                and isinstance(data.get("image"), str) and data["image"] in aliases):
-            templates.append({"id": path.stem, "description": data.get("description", "")})
+        if template["image"] in aliases:
+            templates.append({"id": name, "description": template["description"],
+                              "teamLimit": team_limit(template["resources"])})
     return templates
 
 
@@ -72,7 +74,7 @@ def guest_statuses(event):
 
 def state():
     event = event_state()
-    result = {"portal": PORTAL, "templates": [], "event": None, "warnings": []}
+    result = {"portal": portal_url(), "templates": [], "event": None, "warnings": []}
     warnings = result["warnings"]
     if not event:
         try:
@@ -102,7 +104,7 @@ def state():
                       "active": session, "resetting": team.get("resetting", False),
                       "screenGeneration": team.get("screen_generation")})
     result["event"] = {"name": event["name"], "run": event["run"], "template": event["template"],
-                       "teams": teams}
+                       "teams": teams, "teamLimit": team_limit(event.get("resources", DEFAULT_RESOURCES))}
     return result
 
 
@@ -176,7 +178,7 @@ def handle(data):
         if not team["ready"]:
             raise ValueError("This team is not ready to connect.")
         return {"team": username, "username": team.get("portal_login", username),
-                "password": team["password"], "portal": PORTAL}
+                "password": team["password"], "portal": portal_url()}
     raise ValueError("Unknown dashboard operation.")
 
 

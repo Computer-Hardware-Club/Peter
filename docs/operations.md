@@ -14,28 +14,25 @@
 
 Use Peter’s existing SSH access for administration. Root and the `incus-admin` and Docker groups can administer the host. Keep these privileges with trusted officers. Guacamole has only temporary team accounts with permission to read their own connection. The application has no Guacamole administrator account. PostgreSQL, guacd, and the Incus API have no externally published listeners.
 
-Each VM has 2 vCPUs, 2 GiB of RAM, and a 10 GiB virtual root disk. The Incus project caps allocation at four VMs, eight vCPUs, and 8 GiB RAM. Deployment checks room for the selected disks plus a 16 GiB host reserve. Storage is sparse, so monitor real free space on the host. The portal services have container memory and process limits, and their Docker logs rotate.
+By default each VM has 2 vCPUs, 2 GiB of RAM, and a 10 GiB virtual root disk. The Incus project caps allocation at four VMs, eight vCPUs, and 8 GiB RAM. Deployment checks room for the selected disks plus a 16 GiB host reserve. Storage is sparse, so monitor real free space on the host. The portal services have container memory and process limits, and their Docker logs rotate.
 
 Each team has a separate `wks1`–`wks4` bridge with a private /30, one VM NIC, and static guest configuration. Each guest gets a single return route to guacd. The host firewall drops traffic to host listeners and routed traffic across the workshop bridges, with an exception for SSH from guacd and the matching replies. The guest firewall is irrelevant to that decision. There is no guest NAT, DHCP, DNS, default gateway, or IPv6 route. The database uses an internal Docker network without a host gateway. The web application can read portal configuration and write session history. Officers manage accounts and connections through the dashboard or CLI. The firewall loads before Incus or Docker, and both services require it. Incus restores the VMs and the portal restarts under systemd.
 
-## Templates
+## Participant portal URL
 
-The default `test-vm` template points to the private Incus alias `debian-trixie`. The upstream Linux Containers Debian 13 cloud image is cached as `debian-trixie-base`. The builder downloads signed Debian packages on Peter, installs them through the VM agent into a VM with zero NICs, and removes the builder’s SSH host keys and cloud-init identity before publishing. The VM boots with a fresh host identity and team SSH key. To build a workshop with additional Debian packages, work between events.
+On a fresh installation, the URL shared by the CLI and dashboard is `http://127.0.0.1:18080/`. Use that address with an SSH forward from your workstation to the server’s loopback TCP port 8080. To share a public portal with participants, point your HTTPS reverse proxy or tunnel at that loopback origin, enable WebSockets, and put the public URL in the root-owned file `/etc/workshop/portal-url`.
 
 ```sh
-sudo /opt/workshop/build-template.sh linux-networking tcpdump dnsutils iproute2
+printf '%s\n' 'https://workshop.example.org/' | sudo tee /etc/workshop/portal-url >/dev/null
 ```
 
-Add `templates/linux-networking.json` to Git and install that file to the root-owned copy at `/opt/workshop/templates/`. The dashboard lists the template as soon as both the manifest and its Incus image alias exist.
+Keep the officer dashboard on its separate LAN or SSH address. Peter’s existing configuration is covered in the [Cloudflare handoff](cloudflare.md).
 
-```json
-{
-  "image": "linux-networking",
-  "description": "Debian with tcpdump and DNS utilities"
-}
-```
+## Templates
 
-Deploy with `sudo workshop deploy networking --template linux-networking --teams 3`. The CLI records the complete image fingerprint at deployment. Keep that image until the event is over. The builder replaces the alias when rebuilding the same name. You can also import a trusted custom Incus VM image into the `workshop` project. Use Debian 13 with cloud-init and Incus VM agent support, include `openssh-server` and `sudo`, and remove passwords, authorized keys, machine identity, and SSH host keys before publishing. Never publish a team VM after participants have accessed it.
+Use the [workshop VM format](templates.md) to define packages, guest setup, and resources. The default `test-vm` template points to the private Incus alias `debian-trixie`, built from an upstream Debian 13 cloud image cached as `debian-trixie-base`.
+
+You can also import a trusted custom Incus VM image into the `workshop` project. Use Debian 13 with cloud-init and Incus VM agent support, include `openssh-server` and `sudo`, and remove passwords, authorized keys, machine identity, and SSH host keys before publishing. Never publish a team VM after participants have accessed it.
 
 To update the upstream base, copy a fresh cloud image into the project under a temporary alias. Review its architecture and type, move `debian-trixie-base` to the new fingerprint, then rebuild your template aliases. Remove retired unreferenced images after verifying the replacement.
 

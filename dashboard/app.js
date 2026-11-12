@@ -139,8 +139,12 @@ function renderTemplates(templates) {
     else if (templates.some((template) => template.id === "test-vm")) select.value = "test-vm";
     model.templateOptions = signature;
   }
-  $("template-description").textContent =
-    templates.find((template) => template.id === select.value)?.description || "";
+  const template = templates.find((option) => option.id === select.value);
+  $("template-description").textContent = template?.description || "";
+  const count = $("team-count");
+  const limit = template?.teamLimit || 4;
+  for (const option of count.options) option.disabled = Number(option.value) > limit;
+  if (Number(count.value) > limit) count.value = String(limit);
 }
 
 function renderRoster(teams) {
@@ -234,7 +238,7 @@ function renderState() {
 
   renderTemplates(templates || []);
   $("deploy-form").querySelector("button[type=submit]").disabled = busy || !templates?.length;
-  $("add-team").disabled = busy || teams.length >= 4;
+  $("add-team").disabled = busy || teams.length >= (event?.teamLimit || 4);
   $("open-terminals").disabled = !teams.length;
   $("end-workshop").disabled = busy;
   $("roster-summary").textContent = model.stateStale ? "Status unknown" : `${ready} of ${teams.length} ready`;

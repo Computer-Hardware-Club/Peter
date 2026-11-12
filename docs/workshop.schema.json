@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Peter workshop template",
+  "type": "object",
+  "required": ["version", "description"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "description": { "type": "string", "pattern": "\\S" },
+    "image": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,23}$", "default": "debian-trixie" },
+    "packages": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9+.-]*$" } },
+    "init": { "const": "init.sh" },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "vcpus": { "type": "integer", "minimum": 1, "maximum": 8, "default": 2 },
+        "memory_mib": { "type": "integer", "minimum": 512, "maximum": 8192, "default": 2048 },
+        "disk_gib": { "type": "integer", "minimum": 10, "maximum": 40, "default": 10 }
+      }
+    }
+  },
+  "if": { "required": ["packages"], "properties": { "packages": { "minItems": 1 } } },
+  "then": {
+    "required": ["image"],
+    "properties": { "image": { "not": { "enum": ["debian-trixie", "debian-trixie-base"] } } }
+  }
+}
