@@ -38,7 +38,9 @@ The original local acceptance tests ran before Cloudflare publication.
 
 ## Public hostname
 
-On November 11, Cloudflare published `workshop.computerhardwareclub.org` through the healthy `peter-workshop` tunnel. Public DNS resolved, and Peter's enabled `cloudflared.service` received the route to `http://127.0.0.1:8080` with Access token validation. Unauthenticated HTTPS requests to the portal, login API, and WebSocket endpoint each redirected to Cloudflare Access. The Access page offered an email code, and the application's policy allows `@oregonstate.edu` addresses. An authenticated terminal through the public hostname remains to be verified with an OSU mailbox.
+On November 11, Cloudflare published `workshop.computerhardwareclub.org` through the healthy `peter-workshop` tunnel. The original configuration required Cloudflare Access email verification and redirected unauthenticated requests to its sign-in page.
+
+After switching to Guacamole-only sign-in, verified that the public HTTPS page loads directly, rejects invalid credentials, and accepts an active team's login with exactly one assigned VM. The browser test also verified that the private dashboard accepts the updated officer password and copies the workshop link, username, and password together.
 
 ## One-terminal limit
 

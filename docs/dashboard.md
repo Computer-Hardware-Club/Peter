@@ -23,7 +23,7 @@ ssh 192.168.1.12 'sudo -n cat /etc/workshop/dashboard/lan-ca.crt' > peter-worksh
 ## Run a workshop
 
 1. Sign in, enter a workshop name, choose `test-vm`, and start with one to four teams. The default is a minimal Debian 13 VM with SSH, sudo, and the Incus agent.
-2. When a team shows **Ready**, open **Team login**, choose **Copy team login**, and send the details privately in Discord or another channel you already use. The copied text includes the workshop link, username, and password.
+2. When a team shows **Ready**, open **Team login**, choose **Copy team login**, and send the details privately in Discord or another channel you already use. Participants use the copied workshop link and sign in with their team username and password.
 3. Use **Add team** or **Remove team** as attendance changes. The other teams keep their running VMs and credentials. Each VM accepts one active browser terminal.
 4. Select a team to see its current connection state and live or recent terminal output. Guacamole records what the browser terminal receives, including commands echoed by the shell and their results. Commands that run without appearing in that terminal are outside the recording. Tell participants about monitoring before they begin.
 5. Use **Reset VM** to rebuild a team from the event's original image. The old terminal disconnects and the team can reconnect with the same credentials once the replacement is ready. The other VMs continue running.

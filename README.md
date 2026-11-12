@@ -14,7 +14,7 @@ sudo workshop status
 sudo workshop credentials --team 1
 ```
 
-Repeat the credentials command for each team and share the login privately with that team. Participants open [workshop.computerhardwareclub.org](https://workshop.computerhardwareclub.org/), enter the one-time code sent to their `@oregonstate.edu` email, and sign in to Guacamole with the team credentials. They select their team’s SSH connection if Guacamole shows the connection list.
+Repeat the credentials command for each team and share the login privately with that team. Participants open the workshop portal and sign in once with their team username and password. They select their team’s SSH connection if Guacamole shows the connection list. [Workshop portal](https://workshop.computerhardwareclub.org/)
 
 Officers can also forward the loopback portal over their existing SSH connection and open [the local portal](http://127.0.0.1:18080/).
 
