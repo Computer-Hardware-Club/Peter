@@ -37,13 +37,13 @@ if [[ $(pwd -P) != /opt/workshop ]]; then
     done
     install -m 0644 guest/workshop-login.sh /opt/workshop/guest/
     install -m 0755 guest/chcfetch /opt/workshop/guest/
-    install -m 0644 portal-reset/{guac-manifest.json,reset.js,reset.css} /opt/workshop/portal-reset/
+    install -m 0644 portal-reset/{guac-manifest.json,reset.js,reset.css,clipboard.js} /opt/workshop/portal-reset/
     install -m 0644 README.md /opt/workshop/
     install -m 0644 docs/*.md /opt/workshop/docs/
 fi
 (
     cd /opt/workshop/portal-reset
-    python3 -m zipfile -c extensions/workshop-reset.jar.new guac-manifest.json reset.js reset.css
+    python3 -m zipfile -c extensions/workshop-reset.jar.new guac-manifest.json reset.js reset.css clipboard.js
     mv -f extensions/workshop-reset.jar.new extensions/workshop-reset.jar
 )
 rm -f /opt/workshop/templates/ubuntu-basics.json
