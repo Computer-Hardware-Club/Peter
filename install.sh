@@ -26,7 +26,7 @@ if [[ $(pwd -P) != /opt/workshop ]]; then
     install -m 0644 workshop_templates.py /opt/workshop/
     install -m 0644 infra/*.* /opt/workshop/infra/
     install -d -m 0755 /opt/workshop/infra/guacd
-    install -m 0644 infra/guacd/{Dockerfile,terminal.patch} /opt/workshop/infra/guacd/
+    install -m 0644 infra/guacd/{Dockerfile,terminal.patch,tunnel-cleanup.patch} /opt/workshop/infra/guacd/
     chmod 0755 /opt/workshop/infra/db-init.sh
     install -m 0644 templates/*.json /opt/workshop/templates/
     for manifest in templates/*/workshop.json; do
