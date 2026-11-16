@@ -1,0 +1,123 @@
+commit 7da7d03d3d230ebfb73f2f6df5a12c6d79854155
+Author: Vemula-Rohith <vemularohith93@gmail.com>
+Date:   Mon Oct 19 21:31:46 2026 +0530
+
+    GUACAMOLE-2344: Handle terminal dimensions with no valid copy or draw range.
+
+    A viewport smaller than one character produced a terminal with zero rows
+    or columns, after which redraws requested column ranges such as 0..-1.
+    Scrolling the full display by its entire height, as every linefeed does
+    on a one-row terminal, requested a row copy with no source rows inside
+    the display. Both reached the assertion in guac_terminal_fit_to_range(),
+    aborting the connection process.
+
+    The terminal is now kept at least one character in each dimension, and
+    the display copy and set operations ignore requests that have no valid
+    range within the display.
+
+diff --git a/src/terminal/display.c b/src/terminal/display.c
+index d1049c39..885ed7ea 100644
+--- a/src/terminal/display.c
++++ b/src/terminal/display.c
+@@ -358,6 +358,11 @@ void guac_terminal_display_copy_columns(guac_terminal_display* display, int row,
+     if (row < 0 || row >= display->height)
+         return;
+
++    /* Ignore operations for which no source column has a destination within
++     * the display */
++    if (offset >= display->width || -offset >= display->width)
++        return;
++
+     /* Fit relevant extents of operation within bounds (NOTE: Because this
+      * operation is relative and represents the destination with an offset,
+      * there's no need to recalculate the destination region - the offset
+@@ -408,6 +413,11 @@ void guac_terminal_display_copy_columns(guac_terminal_display* display, int row,
+ void guac_terminal_display_copy_rows(guac_terminal_display* display,
+         int start_row, int end_row, int offset) {
+
++    /* Ignore operations for which no source row has a destination within the
++     * display */
++    if (offset >= display->height || -offset >= display->height)
++        return;
++
+     /* Fit relevant extents of operation within bounds (NOTE: Because this
+      * operation is relative and represents the destination with an offset,
+      * there's no need to recalculate the destination region - the offset
+@@ -483,7 +493,7 @@ void guac_terminal_display_set_columns(guac_terminal_display* display, int row,
+         return;
+
+     /* Ignore operations outside display bounds */
+-    if (row < 0 || row >= display->height)
++    if (row < 0 || row >= display->height || display->width == 0)
+         return;
+
+     /* Fit range within bounds */
+diff --git a/src/terminal/terminal.c b/src/terminal/terminal.c
+index 3628e4f5..50e633a3 100644
+--- a/src/terminal/terminal.c
++++ b/src/terminal/terminal.c
+@@ -451,6 +451,16 @@ static void calculate_rows_and_columns(guac_terminal* term,
+     /* Keep width within predefined maximum */
+     if (*columns > GUAC_TERMINAL_MAX_COLUMNS)
+         *columns = GUAC_TERMINAL_MAX_COLUMNS;
++
++    /* The terminal must always contain at least one character cell, even if
++     * the available display area is smaller than a single character. A zero
++     * dimension produces empty ranges that the display operations cannot
++     * represent. */
++    if (*rows < 1)
++        *rows = 1;
++
++    if (*columns < 1)
++        *columns = 1;
+ }
+
+ /**
+
+commit 950e84b33548bf6af36deae096cf5dc743553986
+Author: Stephen Schiffli <sschiffli@keepersecurity.com>
+Date:   Tue Jul 29 17:50:34 2025 +0000
+
+    GUACAMOLE-2111: Support clicking within scrollbar track in terminal emulator.
+
+--- a/src/terminal/scrollbar.c
++++ b/src/terminal/scrollbar.c
+@@ -456,9 +456,16 @@
+         if (mask & GUAC_CLIENT_MOUSE_LEFT)
+             scrollbar->drag_current_y = y;
+
+-        /* Stop drag if mouse button is released */
+-        else
++        /* Commit the last pointer position even when the button is released
++         * before the renderer has flushed a frame. */
++        else {
++            int value;
++            guac_terminal_scrollbar_render_state state;
++            calculate_state(scrollbar, &state, &value);
+             scrollbar->dragging_handle = 0;
++            if (value != scrollbar->value && scrollbar->scroll_handler)
++                scrollbar->scroll_handler(scrollbar, value);
++        }
+
+         /* Mouse event was handled by scrollbar */
+         return 1;
+@@ -478,6 +485,19 @@
+
+     }
+
++    /* Handle left click within scrollbar but outside handle */
++    else if (mask == GUAC_CLIENT_MOUSE_LEFT
++            && x >= parent_left && x < parent_right
++            && y >= parent_top  && y < parent_bottom) {
++
++        /* Snap the handle to the middle of the click location */
++        scrollbar->dragging_handle = 1;
++        scrollbar->drag_offset_y = scrollbar->render_state.handle_height / 2;
++        scrollbar->drag_current_y = y;
++
++        /* Mouse event was handled by scrollbar */
++        return 1;
++    }
+     /* Eat any events that occur within the scrollbar */
+     return x >= parent_left && x < parent_right
+         && y >= parent_top  && y < parent_bottom;

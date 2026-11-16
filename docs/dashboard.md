@@ -27,6 +27,8 @@ Screen recordings are stored in a shared 512 MiB memory volume and survive a tea
 
 If the participant portal is unavailable, the dashboard still shows the VM roster and marks session status unknown. Team login becomes available again once the portal is healthy and the VM is running. If screen updates stop, **Stale** marks the last available frame.
 
+Participants can scroll through up to 3,000 terminal rows with the mouse wheel or trackpad, the terminal’s scrollbar on the right, or Shift+Page Up and Shift+Page Down.
+
 ## Install or restore
 
 Install the workshop platform first. From a trusted checkout on a host already connected to Tailscale, run the following with the hostname and allowed login from `tailscale status --json`.

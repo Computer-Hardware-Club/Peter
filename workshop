@@ -281,7 +281,7 @@ def grant_access(slot, team, ssh_key, host_key, retained=False):
         "private-key": ssh_key, "host-key": host_key, "enable-sftp": "false",
         "server-alive-interval": "30",
         "terminal-type": "xterm-256color", "font-name": "DejaVu Sans Mono",
-        "font-size": "13", "color-scheme": TERMINAL_PALETTE,
+        "font-size": "13", "color-scheme": TERMINAL_PALETTE, "scrollback": "3000",
         "recording-path": "/recordings", "recording-name": recording_identity(team) + ".guac",
         "recording-include-keys": "false",
     }

@@ -31,7 +31,8 @@ services:
       start_period: 30s
 
   guacd:
-    image: guacamole/guacd:1.6.0
+    image: peter-guacd:1.6.0-terminal-fixes
+    build: ./guacd
     restart: unless-stopped
     logging: {driver: local}
     mem_limit: 1g
