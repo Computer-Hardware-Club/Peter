@@ -200,3 +200,80 @@ index c61dca3..cd5ca64 100644
      return NULL;
 
  }
+Backport the web-side socket shutdown from Apache Guacamole GUACAMOLE-2118 (c6884bc).
+
+diff --git a/src/guacd/connection.c b/src/guacd/connection.c
+index 3d8e59b..5802cda 100644
+--- a/src/guacd/connection.c
++++ b/src/guacd/connection.c
+@@ -156,7 +156,9 @@ void* guacd_connection_io_thread(void* data) {
+         guac_socket_flush(params->socket);
+     }
+
+-    /* Wait for write thread to die */
++    /* The worker has stopped producing output. Unblock the thread reading
++     * from the web app so it sees EOF and can release the connection slot. */
++    shutdown(params->connected_socket_fd, SHUT_RDWR);
+     pthread_join(write_thread, NULL);
+
+     /* Clean up */
+@@ -191,7 +193,8 @@ void* guacd_connection_io_thread(void* data) {
+  * @return
+  *     Zero if the user was added successfully, non-zero if an error occurred.
+  */
+-static int guacd_add_user(guacd_proc* proc, guac_parser* parser, guac_socket* socket) {
++static int guacd_add_user(guacd_proc* proc, guac_parser* parser, guac_socket* socket,
++        int connected_socket_fd) {
+
+     int sockets[2];
+
+@@ -217,6 +220,7 @@ static int guacd_add_user(guacd_proc* proc, guac_parser* parser, guac_socket* so
+     params->parser = parser;
+     params->socket = socket;
+     params->fd = user_fd;
++    params->connected_socket_fd = connected_socket_fd;
+
+     /* Start I/O thread */
+     pthread_t io_thread;
+@@ -247,7 +251,8 @@ static int guacd_add_user(guacd_proc* proc, guac_parser* parser, guac_socket* so
+  *     Zero if the connection was successfully routed, non-zero if routing has
+  *     failed.
+  */
+-static int guacd_route_connection(guacd_proc_map* map, guac_socket* socket) {
++static int guacd_route_connection(guacd_proc_map* map, guac_socket* socket,
++        int connected_socket_fd) {
+
+     guac_parser* parser = guac_parser_alloc();
+
+@@ -323,7 +328,7 @@ static int guacd_route_connection(guacd_proc_map* map, guac_socket* socket) {
+     }
+
+     /* Add new user (in the case of a new process, this will be the owner */
+-    int add_user_failed = guacd_add_user(proc, parser, socket);
++    int add_user_failed = guacd_add_user(proc, parser, socket, connected_socket_fd);
+
+     /* If new process was created, manage that process */
+     if (new_process) {
+@@ -405,7 +410,7 @@ void* guacd_connection_thread(void* data) {
+ #endif
+
+     /* Route connection according to Guacamole, creating a new process if needed */
+-    if (guacd_route_connection(map, socket))
++    if (guacd_route_connection(map, socket, connected_socket_fd))
+         guac_socket_free(socket);
+
+     guac_mem_free(params);
+diff --git a/src/guacd/connection.h b/src/guacd/connection.h
+index 08a7526..97aab11 100644
+--- a/src/guacd/connection.h
++++ b/src/guacd/connection.h
+@@ -98,6 +98,9 @@ typedef struct guacd_connection_io_thread_params {
+      */
+     int fd;
+
++    /** The accepted TCP socket owned by the guac_socket above. */
++    int connected_socket_fd;
++
+ } guacd_connection_io_thread_params;
+
+ /**
