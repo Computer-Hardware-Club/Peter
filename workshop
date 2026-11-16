@@ -196,6 +196,13 @@ def create_guest(slot, event, public_key):
         ],
         "runcmd": [["systemctl", "restart", "ssh.service"]],
     }
+    if event.get("populate_home", False):
+        user_data["runcmd"].insert(0, [
+            "runuser", "-u", user, "--", "mkdir", "-p", "--",
+            *(f"/home/{user}/{directory}" for directory in (
+                "Desktop", "Documents", "Downloads", "Music", "Pictures", "Public", "Templates", "Videos",
+            )),
+        ])
     if script := event.get("init"):
         user_data["write_files"].append({
             "path": "/usr/local/lib/workshop/init.sh",
@@ -438,6 +445,7 @@ def deploy(args):
     event = {
         "name": args.name, "run": secrets.token_hex(8), "template": args.template, "image": image,
         "resources": resources, "init": template["init"],
+        "populate_home": template["populate_home"],
     }
     event["teams"] = [new_team(event, slot) for slot in slots]
     provision(event, slots)

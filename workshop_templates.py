@@ -51,6 +51,7 @@ def load_template(directory, name):
         raise ValueError(f"Template {name} is outside the template directory.")
     data = json.loads(manifest.read_text(encoding="utf-8"))
     allowed = {"image", "description"} if legacy else {"version", "description", "image", "packages", "init", "resources"}
+    allowed.add("populate_home")
     if not isinstance(data, dict) or data.keys() - allowed:
         raise ValueError(f"Template {name} has unknown fields or is not a JSON object.")
     if not legacy and (type(data.get("version")) is not int or data["version"] != 1):
@@ -61,6 +62,9 @@ def load_template(directory, name):
     image = data.get("image", None if legacy else DEFAULT_IMAGE)
     if not isinstance(image, str) or not image.strip() or (not legacy and not SLUG.fullmatch(image)):
         raise ValueError(f"Template {name} has an invalid Incus image alias.")
+    populate_home = data.get("populate_home", False)
+    if type(populate_home) is not bool:
+        raise ValueError(f"Template {name}: populate_home must be a boolean.")
     packages = data.get("packages", [])
     if not isinstance(packages, list) or any(not isinstance(pkg, str) or not PACKAGE.fullmatch(pkg) for pkg in packages):
         raise ValueError(f"Template {name} must list Debian package names.")
@@ -85,4 +89,5 @@ def load_template(directory, name):
         if not script.strip() or len(script.encode("utf-8")) > 65536:
             raise ValueError(f"Template {name}: init.sh must contain 1 to 65536 bytes of Bash.")
     return {"description": description, "image": image, "packages": packages,
-            "resources": {**DEFAULT_RESOURCES, **resources}, "init": script}
+            "resources": {**DEFAULT_RESOURCES, **resources}, "init": script,
+            "populate_home": populate_home}

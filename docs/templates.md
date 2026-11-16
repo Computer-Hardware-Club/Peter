@@ -17,6 +17,7 @@ The directory name becomes the template ID used by the CLI and officer dashboard
 | `description` | Required. Short description shown to officers. |
 | `image` | Optional local Incus VM image alias. Defaults to `debian-trixie`. |
 | `packages` | Optional list of extra Debian package names. When nonempty, set `image` to a distinct alias for the derived image, such as `shell-lab`. |
+| `populate_home` | Optional boolean. Defaults to `false`. Set to `true` to create Desktop, Documents, Downloads, Music, Pictures, Public, Templates, and Videos in each team user’s home before `init.sh` runs. The home directory and SSH setup are available with either value. Also supported in flat JSON templates. |
 | `init` | Optional. Set to `"init.sh"` to run that file from the same directory. |
 | `resources.vcpus` | Optional integer from 1 to 8. Defaults to 2 per VM. |
 | `resources.memory_mib` | Optional integer from 512 to 8192. Defaults to 2048 MiB per VM. |
@@ -64,6 +65,6 @@ sudo workshop build-template shell-lab
 sudo workshop deploy shell-tools --template shell-lab --teams 2
 ```
 
-The dashboard lists an installed template once its image alias is available. Peter pins the image fingerprint, initialization script, and resources when you start the event. Changes to the source template apply to the next event. Keep the pinned image available until the current event ends.
+The dashboard lists an installed template once its image alias is available. Peter pins the image fingerprint, initialization script, resources, and home-folder setting when you start the event. Changes to the source template apply to the next event. Keep the pinned image available until the current event ends.
 
 Older flat manifests such as [test-vm.json](../templates/test-vm.json) still work. Use the directory format for new templates.

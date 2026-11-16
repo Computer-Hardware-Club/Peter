@@ -9,6 +9,7 @@
     "description": { "type": "string", "pattern": "\\S" },
     "image": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,23}$", "default": "debian-trixie" },
     "packages": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9+.-]*$" } },
+    "populate_home": { "type": "boolean", "default": false },
     "init": { "const": "init.sh" },
     "resources": {
       "type": "object",
