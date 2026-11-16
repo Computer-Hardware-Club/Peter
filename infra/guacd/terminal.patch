@@ -121,3 +121,25 @@ Date:   Tue Jul 29 17:50:34 2025 +0000
      /* Eat any events that occur within the scrollbar */
      return x >= parent_left && x < parent_right
          && y >= parent_top  && y < parent_bottom;
+
+diff --git a/src/terminal/terminal.c b/src/terminal/terminal.c
+--- a/src/terminal/terminal.c
++++ b/src/terminal/terminal.c
+@@ -627,3 +627,17 @@ int guac_terminal_render_frame(guac_terminal* terminal) {
++        /* Coalesce updates when frame acknowledgments are falling behind.
++         * Bound the delay so a stale lag sample cannot stall the terminal,
++         * and leave the idle sync path running so it can refresh that sample. */
++        int lag = guac_client_get_processing_lag(client);
++        if (lag > 250)
++            lag = 250;
++        if (lag > GUAC_TERMINAL_FRAME_DURATION) {
++            guac_timestamp remaining = frame_start + lag
++                    - guac_timestamp_current();
++            if (remaining > 0 && remaining <= lag
++                    && client->state == GUAC_CLIENT_RUNNING)
++                guac_timestamp_msleep((int) remaining);
++        }
++
+         /* Flush terminal */
+         guac_terminal_lock(terminal);
+         guac_terminal_flush(terminal);
