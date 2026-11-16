@@ -6,12 +6,11 @@ const vm = require("node:vm");
 
 const source = readFileSync(join(__dirname, "clipboard.js"), "utf8");
 
-function setup() {
+function setup(target = { closest: () => null }) {
     const listeners = {};
     const timers = [];
     const broadcasts = {};
     const sent = [];
-    const target = { closest: () => null };
     let path = "/client/team";
     const client = {
         id: "team",
@@ -97,6 +96,19 @@ test("drops an in-flight clipboard read after leaving the terminal", async () =>
     resolve("do not send");
     await reading;
     assert.deepEqual(sent, []);
+});
+
+test("pastes the complete script from Guacamole's focused input sink", () => {
+    const sink = {
+        matches: (selector) => selector === "body > textarea",
+        style: { position: "fixed", width: "0px", height: "0px" },
+        closest: () => ({})
+    };
+    const { dispatch, sent } = setup(sink);
+    const script = "# terminal paste fixture\n".repeat(740);
+    const event = dispatch("paste", { clipboardData: { getData: () => script } });
+    assert.equal(event.defaultPrevented, true);
+    assert.deepEqual(sent, [["text/plain", script], [1, 0xffe3], [1, 0x56], [0, 0x56], [0, 0xffe3]]);
 });
 
 test("leaves paste in editable fields alone", () => {

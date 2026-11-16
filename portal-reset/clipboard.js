@@ -14,7 +14,10 @@
         let pending;
 
         function focusedClient(target) {
-            if (target?.closest?.("input, textarea, select, [contenteditable], #guac-menu")) return null;
+            // Guacamole focuses an invisible textarea appended directly to the body.
+            const inputSink = target?.matches?.("body > textarea") &&
+                target.style.position === "fixed" && target.style.width === "0px" && target.style.height === "0px";
+            if (!inputSink && target?.closest?.("input, textarea, select, [contenteditable], #guac-menu")) return null;
             const route = /^\/client\/([a-z0-9_=-]+)$/i.exec($location.path());
             if (!route) return null;
             const client = manager.getManagedClientGroup(route[1]).clients.find(
