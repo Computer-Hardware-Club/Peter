@@ -60,6 +60,16 @@ df -h /var/lib/incus
 - If the database initialization fails on a new host, inspect `sudo docker logs workshop-db-1`. Its health check requires the schema and the application role. Treat any existing volume as persistent data and preserve it before repair.
 - A host reboot interrupts browser sessions. Participants can reconnect with the same team credentials after the portal and guests recover.
 
+## Stage, apply, and roll back a release
+
+Run `sudo ./install.sh` from a trusted checkout outside `/opt/workshop`. It writes the release and generated extension to the root-only `/var/lib/workshop/releases/staged/`. You can stage during a workshop. A portal container restart or host reboot still uses the existing installation and image.
+
+For the first update of a legacy installation, stage with `sudo ./install.sh --stage --base REF`, using the Git revision from which the installed files were derived. The installer merges local changes against that revision. Later installs record a baseline under `/opt/workshop/.release-base`. If the installer reports conflicts, reconcile the listed files in the staged release against the live installation and upstream changes, then retry applying. Check the staged files against the installed VPN, Compose, and terminal settings before applying. The installer preserves site-only files, extra extension assets, and existing systemd units and drop-ins. Review upstream changes to an existing unit separately and reconcile them with the host's configuration if needed.
+
+Between workshops, run `sudo ./install.sh --apply-portal`. It takes the workshop lock, checks that the event has ended, validates the merged configuration, and builds guacd under a separate tag. It then stops the portal, switches the installation, and recreates the stack with health checks. Keep Docker image pruning off during activation and rollback. Check the portal and officer dashboard through their configured URLs before starting a workshop.
+
+If activation fails after the portal stops, check `sudo systemctl status workshop-portal workshop-firewall` and the Docker logs. After the installer reports that it saved the previous release, run `sudo ./install.sh --rollback-portal` while no event is active. This restores the previous tree and guacd image and recreates the stack using the existing database volume and credentials. If activation was interrupted before the previous release was saved, check which release is at `/opt/workshop` and start `workshop-portal` from the intact tree or retry the apply. After an interrupted first install, rerun `--apply-portal` to finish bootstrapping. Keep the most recent verified release and a database backup available for recovery.
+
 ## Disaster recovery
 
 Keep an off-host copy of this Git repository and export any custom images you cannot rebuild from Debian packages. Run the following with a protected off-host destination or a mounted backup target.
@@ -72,7 +82,7 @@ Keep the exported files together. Treat images with custom material as private. 
 
 On an audited bare-metal Ubuntu 24.04 amd64 replacement with KVM, verify the workshop ranges and interface names in `infra/firewall.nft`, `infra/compose.yaml`, and `workshop` are available. The workshop uses `10.241.1.0/30` through `10.241.4.0/30`, `172.31.253.0/28`, `172.31.253.16/28`, `wks1`–`wks4`, `wks-guac`, and loopback TCP port 8080. Preserve the replacement host’s management network and existing firewall.
 
-1. Transfer a trusted checkout of this repository. Run `sudo ./install.sh` from that checkout. It installs packages, the root-owned configuration, the default image, and the systemd units. It generates stack passwords on the host. An existing running portal keeps serving participants while the installer stages files and builds guacd. Between workshops, run `sudo ./install.sh --apply-portal` to reconcile services and load the portal extension. A Peter installation with custom VPN or terminal configuration needs those local settings carried forward. Follow the [officer dashboard setup](dashboard.md#install-or-restore) to restore your chosen access mode.
+1. Transfer a trusted checkout of this repository. Run `sudo ./install.sh`, then `sudo ./install.sh --apply-portal`. Initial activation installs packages, generates stack passwords, and sets up the default Incus image and systemd units. Follow the [officer dashboard setup](dashboard.md#install-or-restore) for your chosen access mode.
 2. Rebuild custom aliases from the documented packages, or import the trusted exported VM image into the `workshop` project with its original alias. Restore its manifest in `/opt/workshop/templates/`.
 3. Reissue the Cloudflare Tunnel token or retrieve it from the administrator’s protected secret store. Install it and follow the [Cloudflare handoff](cloudflare.md).
 4. Deploy a small test event, confirm browser SSH and isolation, then destroy it. Deploy the real event and distribute fresh credentials.

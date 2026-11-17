@@ -12,6 +12,7 @@
         const connected = $injector.get("ManagedClientState").ConnectionState.CONNECTED;
         const selections = new WeakMap();
         let pending;
+        let copying;
 
         function activeClient() {
             const route = /^\/client\/([a-z0-9_=-]+)$/i.exec($location.path());
@@ -25,7 +26,7 @@
             // Guacamole focuses an invisible textarea appended directly to the body.
             const inputSink = target?.matches?.("body > textarea") &&
                 target.style.position === "fixed" && target.style.width === "0px" && target.style.height === "0px";
-            if (!inputSink && target?.closest?.("input, textarea, select, button, [contenteditable], #guac-menu, .chc-clipboard")) return null;
+            if (!inputSink && target?.closest?.("input, textarea, select, button, [contenteditable], dialog, [role=dialog], #guac-menu, .chc-clipboard")) return null;
             return activeClient();
         }
 
@@ -168,16 +169,21 @@
         });
 
         window.addEventListener("keydown", (event) => {
+            copying = null;
             if (event.defaultPrevented || event.isComposing || event.altKey ||
-                event.key?.toLowerCase() !== "c" ||
-                !(event.metaKey && !event.ctrlKey || event.ctrlKey && event.shiftKey && !event.metaKey)) return;
+                event.key?.toLowerCase() !== "c" || !event.metaKey || event.ctrlKey || event.shiftKey) return;
             const client = focusedClient(event.target);
-            if (selections.has(client)) event.stopImmediatePropagation();
+            if (!selections.has(client)) return;
+            copying = client;
+            event.stopImmediatePropagation();
         }, true);
 
         window.addEventListener("copy", (event) => {
+            const client = copying;
+            copying = null;
             if (event.defaultPrevented || !event.clipboardData) return;
-            const text = selections.get(focusedClient(event.target));
+            if (client !== focusedClient(event.target)) return;
+            const text = selections.get(client);
             if (text === undefined) return;
             event.clipboardData.setData("text/plain", text);
             event.preventDefault();

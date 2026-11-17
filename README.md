@@ -10,6 +10,7 @@ Use an Ubuntu 24.04 amd64 host with KVM. Check that the [network ranges, ports, 
 git clone https://github.com/Computer-Hardware-Club/Peter.git
 cd Peter
 sudo ./install.sh
+sudo ./install.sh --apply-portal
 sudo ./install-dashboard.sh
 ```
 

@@ -1,4 +1,4 @@
-/* global angular */
+/* global angular, Guacamole */
 (() => {
     "use strict";
 
@@ -13,6 +13,12 @@
         const ClientIdentifier = $injector.get("ClientIdentifier");
         const states = $injector.get("ManagedClientState").ConnectionState;
         const terminalStates = [states.DISCONNECTED, states.CLIENT_ERROR, states.TUNNEL_ERROR];
+        const codes = Guacamole.Status.Code;
+        const transientCodes = new Set([
+            codes.SERVER_ERROR, codes.SERVER_BUSY, codes.UPSTREAM_TIMEOUT, codes.UPSTREAM_ERROR,
+            codes.RESOURCE_CLOSED, codes.UPSTREAM_NOT_FOUND, codes.UPSTREAM_UNAVAILABLE,
+            codes.CLIENT_TIMEOUT
+        ]);
 
         const overlay = document.createElement("div");
         const panel = document.createElement("div");
@@ -125,6 +131,10 @@
             context.generation = marker.generation;
             const client = manager.getManagedClientGroup(context.clientId).clients[0];
             const state = client?.clientState.connectionState;
+            const terminal = terminalStates.includes(state);
+            const transient = state === states.DISCONNECTED
+                ? context.connected || context.phase === "reconnecting"
+                : transientCodes.has(client?.clientState.statusCode);
 
             if (marker.state === "resetting" || marker.state === "failed") {
                 if (changed || context.phase !== marker.state) {
@@ -142,7 +152,12 @@
                 context.phase = "idle";
                 status();
                 return;
-            } else if (context.phase === "idle" && context.connected && terminalStates.includes(state)) {
+            } else if (terminal && !transient) {
+                // Guacamole can show the original error (including SSH authentication errors).
+                context.phase = "idle";
+                status();
+                return;
+            } else if (context.phase === "idle" && terminal) {
                 beginReconnect(context, "disconnect");
             }
             if (context.phase === "reconnecting") reconnect(context, client);
@@ -164,7 +179,7 @@
                         await recoverOldUrl(context);
                     } catch (treeError) {
                         // If even the root directory is denied, the session cannot recover this URL.
-                        if (treeError.type === "PERMISSION_DENIED" || treeError.type === "INVALID_CREDENTIALS") {
+                        if (["PERMISSION_DENIED", "UNAUTHORIZED", "INVALID_CREDENTIALS"].includes(treeError.type)) {
                             if (stillCurrent(context)) stop();
                             return;
                         }
@@ -196,7 +211,7 @@
                     current.phase = "idle";
                     status();
                 }
-            } else if (terminalStates.includes(state) && current.confirmed && current.connected && current.phase === "idle") {
+            } else if (terminalStates.includes(state) && current.confirmed && current.phase === "idle") {
                 const client = manager.getManagedClientGroup(current.clientId).clients[0];
                 console.info("Workshop terminal disconnected", { time: new Date().toISOString(), state,
                     statusCode: client?.clientState.statusCode });

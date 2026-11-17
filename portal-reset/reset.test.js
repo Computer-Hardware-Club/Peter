@@ -22,7 +22,13 @@ function element() {
     };
 }
 
-function setup() {
+const codes = {
+    SERVER_ERROR: 0x200, SERVER_BUSY: 0x201, UPSTREAM_TIMEOUT: 0x202, UPSTREAM_ERROR: 0x203,
+    RESOURCE_CLOSED: 0x206, UPSTREAM_NOT_FOUND: 0x207, UPSTREAM_UNAVAILABLE: 0x208,
+    CLIENT_TIMEOUT: 0x308, CLIENT_UNAUTHORIZED: 0x301, CLIENT_FORBIDDEN: 0x303
+};
+
+function setup(initialState = states.CONNECTED, initialCode = 0) {
     const document = { createElement: element, body: element() };
     const timers = new Map();
     const watchers = [];
@@ -32,7 +38,7 @@ function setup() {
     let now = 0;
     let replacement;
     const fixture = { name: team, username: "1", reconnects: 0, disconnects: 0, tree: [] };
-    const client = { clientState: { connectionState: states.CONNECTED }, client: { disconnect() {
+    const client = { clientState: { connectionState: initialState, statusCode: initialCode }, client: { disconnect() {
         fixture.disconnects++;
         client.clientState.connectionState = states.DISCONNECTED;
     } } };
@@ -44,6 +50,7 @@ function setup() {
                 if (fixture.treeError) throw { type: fixture.treeError };
                 return { childConnections: fixture.tree };
             }
+            if (fixture.pendingRequest) await fixture.pendingRequest;
             if (fixture.error) throw { type: fixture.error };
             return { name: fixture.name };
         }
@@ -79,6 +86,7 @@ function setup() {
         angular: { module: () => ({ run: (registration) =>
             registration.at(-1)(root, location, { get: (name) => services[name] }) }) },
         document,
+        Guacamole: { Status: { Code: codes } },
         Date: class extends Date { static now() { return now; } },
         setTimeout: (fn) => { timers.set(++sequence, fn); return sequence; },
         clearTimeout: (id) => timers.delete(id)
@@ -117,7 +125,10 @@ function setup() {
         },
         pending: () => timers.size,
         path: () => location.path(),
-        setConnectionState: (state) => { client.clientState.connectionState = state; }
+        navigate: (value) => { location.path(value); digest(); },
+        setConnectionState(state, statusCode = codes.UPSTREAM_TIMEOUT) {
+            Object.assign((replacement || client).clientState, { connectionState: state, statusCode });
+        }
     });
 }
 
@@ -197,4 +208,58 @@ test("a session that cannot read its authorized directory does not keep polling"
     await app.tick();
     assert.equal(app.pending(), 0);
     assert.equal(app.reconnects, 0);
+});
+
+for (const state of [states.TUNNEL_ERROR, states.CLIENT_ERROR]) {
+    test(`recovers an authorized initial ${state} without replacing an in-flight attempt`, async () => {
+        const app = setup(state, codes.SERVER_ERROR);
+        await app.tick();
+        assert.equal(app.reconnects, 1);
+        app.advance(3000);
+        await app.tick();
+        assert.equal(app.reconnects, 1);
+        app.setConnectionState(state, codes.UPSTREAM_TIMEOUT);
+        await app.tick();
+        assert.equal(app.reconnects, 2);
+        app.connected();
+        await app.tick();
+        assert.equal(app.overlay.hidden, true);
+        assert.equal(app.reconnects, 2);
+    });
+}
+
+test("credential and permission failures never start or continue recovery", async () => {
+    const invalid = setup(states.CLIENT_ERROR, codes.CLIENT_UNAUTHORIZED);
+    await invalid.tick();
+    assert.equal(invalid.reconnects, 0);
+    assert.equal(invalid.overlay.hidden, true);
+
+    const denied = setup(states.TUNNEL_ERROR, codes.SERVER_ERROR);
+    await denied.tick();
+    denied.setConnectionState(states.TUNNEL_ERROR, codes.CLIENT_FORBIDDEN);
+    denied.advance(15000);
+    await denied.tick();
+    assert.equal(denied.reconnects, 1);
+    assert.equal(denied.overlay.hidden, true);
+
+    const expired = setup(states.TUNNEL_ERROR, codes.SERVER_ERROR);
+    expired.error = "INVALID_CREDENTIALS";
+    await expired.tick();
+    assert.equal(expired.pending(), 0);
+    assert.equal(expired.reconnects, 0);
+});
+
+test("ignores an in-flight recovery poll after leaving the client route", async () => {
+    const app = setup(states.TUNNEL_ERROR, codes.SERVER_ERROR);
+    await app.tick();
+    app.advance(15000);
+    let resolve;
+    app.pendingRequest = new Promise((done) => { resolve = done; });
+    const check = app.tick();
+    app.navigate("/");
+    resolve();
+    await check;
+    assert.equal(app.reconnects, 1);
+    assert.equal(app.pending(), 0);
+    assert.equal(app.overlay.hidden, true);
 });

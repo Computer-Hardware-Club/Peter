@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import runpy
+import subprocess
 import sys
 from tempfile import TemporaryDirectory
 import threading
@@ -157,7 +158,7 @@ class DashboardHostTest(unittest.TestCase):
         with patch.dict(host.__globals__, {
             "event_state": lambda: deepcopy(self.event),
             "guest_statuses": lambda _: {"ws-team-1": "Running", "ws-team-2": "Stopped"},
-            "active_logins": unavailable,
+            "cached_active_logins": lambda _: unavailable(),
         }):
             result = host({"op": "state"})
             self.assertEqual([team["status"] for team in result["event"]["teams"]], ["Running", "Stopped"])
@@ -233,17 +234,32 @@ class ScreenRecordingTest(unittest.TestCase):
             (directory / "team-a.guac").write_bytes(b"latest")
             self.assertEqual(b64decode(read_recording(directory, "team-a")["data"]), b"latest")
 
-    def test_pruning_keeps_the_latest_recording_per_slot(self):
+    def test_pruning_retains_a_locked_recording_until_its_writer_exits(self):
         prune = runpy.run_path(str(ROOT / "infra" / "prune-recordings.py"))["prune"]
         with TemporaryDirectory() as tmp:
             directory = Path(tmp)
-            old = directory / "demo-aaaaaaaa-team-1-aaaaaaaa.guac.1"
-            old.write_bytes(b"old")
-            os.utime(old, (1, 1))
-            newest = directory / "demo-aaaaaaaa-team-1-aaaaaaaa-rbbbbbbbbbbbb.guac"
-            newest.write_bytes(b"latest")
+            prefix = "demo-aaaaaaaa-team-1-aaaaaaaa.guac"
+            old, active, newest = (directory / f"{prefix}.{suffix}" for suffix in (1, 2, 3))
+            for path, stamp in ((old, 1), (active, 2), (newest, 100)):
+                path.write_bytes(b"fixture")
+                os.utime(path, (stamp, stamp))
+            with subprocess.Popen(
+                [sys.executable, "-c",
+                 "import fcntl, sys; "
+                 "f = open(sys.argv[1], 'r+b'); fcntl.lockf(f, fcntl.LOCK_EX); "
+                 "print('locked', flush=True); sys.stdin.read()", str(active)],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+            ) as writer:
+                try:
+                    self.assertEqual(writer.stdout.readline(), "locked\n")
+                    prune(directory, newest.stat().st_mtime_ns)
+                    self.assertFalse(old.exists())
+                    self.assertTrue(active.exists())
+                    self.assertTrue(newest.exists())
+                finally:
+                    writer.communicate(timeout=3)
             prune(directory, newest.stat().st_mtime_ns)
-            self.assertFalse(old.exists())
+            self.assertFalse(active.exists())
             self.assertTrue(newest.exists())
 
 
@@ -255,14 +271,11 @@ class ActiveSessionTest(unittest.TestCase):
 
         def run(*args, **options):
             if args[1] == "inspect":
-                return f"true healthy {web}\ntrue healthy {guacd}"
-            if args[-1] == "-tn":
-                return ("tcp   0   0 172.31.253.4:1234 10.241.1.2:22 ESTABLISHED\n"
-                        "tcp   0   0 172.31.253.4:1235 10.241.2.2:22 TIME_WAIT\n")
+                return f"true healthy {web} 123\ntrue healthy {guacd} 456"
             self.assertIn(f"GREATEST('{web}'::timestamptz, '{guacd}'::timestamptz)", args[-1])
             return f"{login}\n{stale}"
 
-        with patch.dict(host.__globals__, {"run": run}):
+        with patch.dict(host.__globals__, {"run": run, "live_ssh_slots": lambda pid: {"1"} if pid == 456 else set()}):
             self.assertEqual(active_logins(), {login})
 
 

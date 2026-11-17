@@ -36,6 +36,7 @@ jobs:
           npm install --prefix "$RUNNER_TEMP/peter-browser" --no-save --ignore-scripts playwright@1.65.1
           "$RUNNER_TEMP/peter-browser/node_modules/.bin/playwright" install --with-deps chromium
           bash tests/portal-lab.sh up "$RUNNER_TEMP/peter-portal"
+          bash tests/portal-lab.sh size-cap "$RUNNER_TEMP/peter-portal"
           NODE_PATH="$RUNNER_TEMP/peter-browser/node_modules" PETER_LAB_URL=http://127.0.0.1:18081 \
             PETER_LAB_CONTROL=tests/portal-lab.sh PETER_LAB_DIR="$RUNNER_TEMP/peter-portal" node tests/browser-checks.js
           bash tests/portal-lab.sh probe "$RUNNER_TEMP/peter-portal"
@@ -45,7 +46,7 @@ jobs:
       - name: Remove lab
         if: always()
         run: |
-          if [ -f "$RUNNER_TEMP/peter-portal/compose.yaml" ]; then
+          if [ -f "$RUNNER_TEMP/peter-portal/active/infra/compose.yaml" ]; then
             bash tests/portal-lab.sh down "$RUNNER_TEMP/peter-portal"
           fi
 

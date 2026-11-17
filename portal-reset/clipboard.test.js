@@ -127,6 +127,7 @@ test("copies the terminal selection and preserves Ctrl+C for interrupt", () => {
     const { dispatch, select } = setup();
     select("terminal selection");
     assert.equal(dispatch("keydown", { ctrlKey: true, key: "c" }).stopped, undefined);
+    assert.equal(dispatch("keydown", { ctrlKey: true, shiftKey: true, key: "C" }).stopped, undefined);
     assert.equal(dispatch("keydown", { metaKey: true, key: "c" }).stopped, true);
     const copied = [];
     const event = dispatch("copy", { clipboardData: { setData: (...args) => copied.push(args) } });
