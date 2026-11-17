@@ -130,8 +130,8 @@ async function portal(context, url) {
         }
     }
 
-    async function login() {
-        const page = await context.newPage();
+    async function login(browserContext = context) {
+        const page = await browserContext.newPage();
         const metrics = { connections: 0, received: 0, errors: [] };
         page.on("pageerror", (error) => metrics.errors.push(error.message));
         page.on("console", (message) => {
@@ -223,7 +223,8 @@ async function portal(context, url) {
     }
 
     await lab("bad-password");
-    const denied = await login();
+    const authContext = await context.browser().newContext();
+    const denied = await login(authContext);
     try {
         await poll(async () => (await lab("auth-failed"), true));
         await denied.page.waitForTimeout(4500);
@@ -233,7 +234,7 @@ async function portal(context, url) {
     } finally {
         console.log(JSON.stringify({ event: "authentication WebSocket closes",
             closes: await denied.page.evaluate(() => window.terminalCloses), ...denied.metrics }));
-        await denied.page.close();
+        await authContext.close();
     }
 }
 

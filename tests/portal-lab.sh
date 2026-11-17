@@ -18,7 +18,7 @@ guest_file() {
     "${compose[@]}" exec -T guest test -f "/tmp/peter-$1"
 }
 active_assets() {
-    docker inspect --format '{{.Id}} {{.Image}}' $("${compose[@]}" ps -q)
+    docker inspect --format '{{.Id}} {{.Image}}' $("${compose[@]}" ps -q) | sort
     sha256sum active/infra/compose.yaml active/portal-reset/extensions/workshop-reset.jar
     "${compose[@]}" exec -T web sha256sum /etc/guacamole/extensions/workshop-reset.jar
 }
@@ -31,7 +31,7 @@ case "$action" in
         "${compose[@]}" exec -T guacd sh -c 'df -k /recordings; cat /sys/fs/cgroup/memory.events' || true
         exit ;;
     outage) "${compose[@]}" stop guacd; exit ;;
-    restore) "${compose[@]}" start --wait guacd; exit ;;
+    restore) "${compose[@]}" up -d --no-deps --no-recreate --wait --wait-timeout 25 guacd; exit ;;
     bad-password)
         sql "UPDATE guacamole_connection_parameter SET parameter_value = 'deliberately-wrong'
              WHERE parameter_name = 'password';"
@@ -65,7 +65,7 @@ case "$action" in
         exit ;;
     restart-staged)
         "${compose[@]}" restart web
-        "${compose[@]}" start --wait web
+        "${compose[@]}" up -d --no-deps --no-recreate --wait --wait-timeout 25 web
         active_assets | diff -u active.before -
         exit ;;
     dashboard-live)
