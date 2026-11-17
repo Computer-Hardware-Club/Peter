@@ -115,7 +115,10 @@ async function clipboard(context) {
 async function portal(context, url) {
     const labControl = process.env.PETER_LAB_CONTROL;
     assert.ok(labControl, "portal checks require a disposable lab");
-    const lab = (action) => run("bash", [labControl, action], { timeout: 30000 });
+    async function lab(action) {
+        const result = await run("bash", [labControl, action], { timeout: 30000 });
+        if (result.stdout.trim()) console.log(result.stdout.trim());
+    }
 
     async function poll(check, timeout = 30000) {
         const deadline = Date.now() + timeout;

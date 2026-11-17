@@ -73,6 +73,7 @@ case "$action" in
         "${compose[@]}" restart web
         "${compose[@]}" up -d --no-deps --no-recreate --wait --wait-timeout 25 web
         active_assets | diff -u active.before -
+        echo 'The active Compose file, image and mounted extension survived the web container restart.'
         exit ;;
     dashboard-live)
         # docker inspect supplies a host PID. Read its real namespace on the runner.
