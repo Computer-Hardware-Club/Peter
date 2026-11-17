@@ -81,7 +81,7 @@ case "$action" in
         docker run --rm --user root --entrypoint sh \
             -v "$source_dir/tests/recording-limit.c:/recording-limit.c:ro" \
             -v "$PWD/size-check:/out" "$PETER_LAB_GUACD_IMAGE" \
-            -ec 'apk add --no-cache build-base=0.5-r3
+            -ec 'apk add --no-cache build-base=0.5-r3 cairo-dev=1.17.8-r1
                  cc -Wall -Wextra -Werror -I/opt/guacamole/include /recording-limit.c \
                     -L/opt/guacamole/lib -lguac -o /out/recording-limit'
         "${compose[@]}" cp size-check/recording-limit guacd:/tmp/recording-limit
