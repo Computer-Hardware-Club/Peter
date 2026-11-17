@@ -263,3 +263,17 @@ test("ignores an in-flight recovery poll after leaving the client route", async 
     assert.equal(app.pending(), 0);
     assert.equal(app.overlay.hidden, true);
 });
+
+test("the recovery window expires while connection metadata is unavailable", async () => {
+    const app = setup(states.TUNNEL_ERROR, codes.SERVER_ERROR);
+    await app.tick();
+    app.error = "SERVER_ERROR";
+    app.advance(120000);
+    await app.tick();
+    assert.equal(app.reconnects, 1);
+    assert.match(app.message.textContent, /Retry or ask/);
+    app.retry();
+    app.error = null;
+    await app.tick();
+    assert.equal(app.reconnects, 2);
+});

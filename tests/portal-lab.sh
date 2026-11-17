@@ -57,7 +57,10 @@ case "$action" in
             bash stage-source/install.sh
             staged=/var/lib/workshop/releases/staged/files/portal-reset/extensions/workshop-reset.jar
             test -s "$staged"
-            ! cmp -s "$staged" /opt/workshop/portal-reset/extensions/workshop-reset.jar
+            if cmp -s "$staged" /opt/workshop/portal-reset/extensions/workshop-reset.jar; then
+                echo "The lab release must contain a different extension." >&2
+                exit 1
+            fi
             for option in --apply-portal --rollback-portal; do
                 if output=$(bash stage-source/install.sh "$option" 2>&1); then exit 1; fi
                 grep -F "End the workshop before changing the active release." <<< "$output"

@@ -109,14 +109,17 @@
                 retryAt: 0, attemptDeadline: 0, attempts: 0 });
         }
 
+        function recoveryExpired(context, now) {
+            if (context.phase !== "reconnecting" || now < context.deadline) return false;
+            context.phase = "timed-out";
+            status("Couldn’t reconnect to your VM. Retry or ask a workshop officer for help.", false, true);
+            return true;
+        }
+
         function reconnect(context, client) {
-            status(context.reason === "reset" ? "Connecting to your fresh VM…" : "Reconnecting your terminal…", true);
             const now = Date.now();
-            if (now >= context.deadline) {
-                context.phase = "timed-out";
-                status("Couldn’t reconnect to your VM. Retry or ask a workshop officer for help.", false, true);
-                return;
-            }
+            if (recoveryExpired(context, now)) return;
+            status(context.reason === "reset" ? "Connecting to your fresh VM…" : "Reconnecting your terminal…", true);
             if (now < context.retryAt) return;
             if (!terminalStates.includes(client?.clientState.connectionState) && now < context.attemptDeadline) return;
 
@@ -189,7 +192,10 @@
                     return;
                 }
             } finally {
-                if (stillCurrent(context)) timer = setTimeout(() => check(context), POLL_MS);
+                if (stillCurrent(context)) {
+                    recoveryExpired(context, Date.now());
+                    timer = setTimeout(() => check(context), POLL_MS);
+                }
             }
         }
 
