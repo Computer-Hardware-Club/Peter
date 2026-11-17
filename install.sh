@@ -80,6 +80,7 @@ compose_at() (
     docker compose --env-file "$state/stack.env" "$@"
 )
 portal=workshop-portal.service
+dashboard=workshop-dashboard.service
 
 # The candidate and active directory live on the same filesystem. Exchange them
 # in one operation so the paths used at boot always point to a complete release.
@@ -110,6 +111,14 @@ start_portal() {
     systemctl enable --now "$portal"
 }
 
+restart_dashboard() {
+    # An enabled dashboard may be failed after an apply. Start it again on
+    # rollback as well as restarting an already running dashboard.
+    if systemctl is-active --quiet "$dashboard" || systemctl is-enabled --quiet "$dashboard"; then
+        systemctl restart "$dashboard"
+    fi
+}
+
 if [[ $mode == --rollback-portal ]]; then
     [[ -s $previous/.guacd-image ]] || { echo 'No previous installation to restore.' >&2; exit 1; }
     stop_portal
@@ -121,6 +130,7 @@ if [[ $mode == --rollback-portal ]]; then
     fi
     systemctl reload workshop-firewall.service
     start_portal
+    restart_dashboard
     exit
 fi
 
@@ -269,5 +279,6 @@ if $fresh; then
 fi
 start_portal
 systemctl enable --now workshop-recordings.timer
+restart_dashboard
 rm -f -- "$releases/bootstrap-pending"
 "$active/workshop" status

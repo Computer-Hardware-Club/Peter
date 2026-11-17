@@ -41,6 +41,13 @@ jobs:
           NODE_PATH="$RUNNER_TEMP/peter-browser/node_modules" PETER_LAB_URL=http://127.0.0.1:18081 \
             PETER_LAB_CONTROL=tests/portal-lab.sh PETER_LAB_DIR="$RUNNER_TEMP/peter-portal" node tests/browser-checks.js
           bash tests/portal-lab.sh probe "$RUNNER_TEMP/peter-portal"
+      - name: Activate and roll back releases on the disposable runner
+        run: |
+          if ! command -v nft >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y nftables
+          fi
+          sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT bash tests/release-lab.sh "$RUNNER_TEMP"
       - name: Collect lab logs
         if: failure()
         run: bash tests/portal-lab.sh logs "$RUNNER_TEMP/peter-portal"
