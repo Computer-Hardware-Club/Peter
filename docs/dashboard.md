@@ -23,7 +23,7 @@ ssh -N -L 127.0.0.1:8090:127.0.0.1:8090 YOUR_SERVER
 5. Use **Reset VM** to rebuild a team with the event’s original image, initialization script, and VM resources. The participant’s open terminal shows reset progress and reconnects automatically to the fresh VM. The team keeps its password, and the other VMs continue running.
 6. Use **End workshop** to remove the VMs, team logins, and screen recordings.
 
-Screen recordings are stored in a shared 512 MiB memory volume and survive a team reset. The dashboard shows the latest session for each team and warns when space runs low. Removing a team or ending the workshop clears the corresponding files. Restarting guacd or Peter clears the memory volume.
+Screen recordings use a shared 512 MiB memory volume. Each session records up to 48 MiB while at least 16 MiB remains free. The terminal connection continues if recording pauses. The dashboard shows the latest screen and warns when the recording approaches either limit. The cleanup timer removes older closed recordings and keeps the latest capture for each team slot. Removing a team or ending the workshop clears its recordings. Restarting guacd or Peter clears the memory volume.
 
 If the participant portal is unavailable, the dashboard still shows the VM roster and marks session status unknown. Team login becomes available again once the portal is healthy and the VM is running. If screen updates stop, **Stale** marks the last available frame.
 

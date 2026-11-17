@@ -488,7 +488,11 @@ def reset(event, slot, keep_password=True):
     slots = [slot] if slot else list(active)
     if not slots:
         raise RuntimeError("There are no teams to reset. Add a team first.")
-    check_host(len(slots), event.get("resources", DEFAULT_RESOURCES)["disk_gib"])
+    current, _ = owned_resources(event, slots)
+    # Provisioning deletes each existing VM before allocating its replacement.
+    # Keep the host reserve and budget a new disk for any missing VM.
+    missing = sum(identity(number)[0] not in current for number in slots)
+    check_host(missing, event.get("resources", DEFAULT_RESOURCES)["disk_gib"])
     teams = [active[number] for number in slots]
     for team in teams:
         team["ready"] = False

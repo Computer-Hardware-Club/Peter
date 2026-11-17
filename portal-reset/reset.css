@@ -45,3 +45,40 @@
     background: #21262d;
     border-color: #8b949e;
 }
+
+.chc-clipboard {
+    position: fixed;
+    top: .35rem;
+    right: .35rem;
+    z-index: 9000;
+    max-width: calc(100vw - .7rem);
+    padding: .25rem;
+    background: #161b22;
+    color: #e6edf3;
+    border-radius: .35rem;
+    font: .875rem/1.4 system-ui, sans-serif;
+}
+
+.chc-clipboard [hidden], .chc-clipboard[hidden] {
+    display: none;
+}
+
+.chc-clipboard button {
+    margin: .2rem;
+    color: inherit;
+    background: #21262d;
+    border: 1px solid #8b949e;
+    border-radius: .25rem;
+}
+
+.chc-clipboard p {
+    margin: .4rem .2rem;
+}
+
+.chc-clipboard textarea {
+    display: block;
+    box-sizing: border-box;
+    width: min(24rem, 100%);
+    min-height: 6rem;
+    margin-bottom: .4rem;
+}

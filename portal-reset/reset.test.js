@@ -18,7 +18,7 @@ function element() {
         children: [],
         append(...nodes) { this.children.push(...nodes); },
         setAttribute() {},
-        addEventListener() {}
+        addEventListener(name, callback) { this[name] = callback; }
     };
 }
 
@@ -29,6 +29,7 @@ function setup() {
     const events = {};
     let sequence = 0;
     let path = "/client/first";
+    let now = 0;
     let replacement;
     const fixture = { name: team, username: "1", reconnects: 0, disconnects: 0, tree: [] };
     const client = { clientState: { connectionState: states.CONNECTED }, client: { disconnect() {
@@ -78,6 +79,7 @@ function setup() {
         angular: { module: () => ({ run: (registration) =>
             registration.at(-1)(root, location, { get: (name) => services[name] }) }) },
         document,
+        Date: class extends Date { static now() { return now; } },
         setTimeout: (fn) => { timers.set(++sequence, fn); return sequence; },
         clearTimeout: (id) => timers.delete(id)
     });
@@ -100,7 +102,10 @@ function setup() {
             const [[id, callback]] = timers;
             timers.delete(id);
             await callback();
+            digest();
         },
+        advance: (ms) => { now += ms; },
+        retry: () => overlay.children[0].children[2].click(),
         connected() {
             replacement.clientState.connectionState = states.CONNECTED;
             digest();
@@ -145,14 +150,33 @@ test("a session already resetting starts with progress, then reports failure", a
     assert.equal(app.pending(), 0);
 });
 
-test("a normal disconnection does not trigger a reset reconnect", async () => {
+test("a tunnel error after connecting is recovered even without a reset marker", async () => {
     const app = setup();
+    await app.tick();
+    app.setConnectionState(states.TUNNEL_ERROR);
+    await app.tick();
+    assert.equal(app.reconnects, 1);
+    assert.match(app.message.textContent, /Reconnecting your terminal/);
+    app.connected();
+    assert.equal(app.overlay.hidden, true);
+});
+
+test("a long reset keeps retrying and has a manual retry after the deadline", async () => {
+    const app = setup();
+    await app.tick();
+    app.name = resetting;
+    await app.tick();
     app.name = ready;
     await app.tick();
-    app.setConnectionState(states.DISCONNECTED);
+    app.advance(31000);
     await app.tick();
-    assert.equal(app.reconnects, 0);
-    assert.equal(app.overlay.hidden, true);
+    assert.equal(app.reconnects, 2);
+    app.advance(120000);
+    await app.tick();
+    assert.match(app.message.textContent, /Retry or ask/);
+    app.retry();
+    await app.tick();
+    assert.equal(app.reconnects, 3);
 });
 
 test("a stale route recovers only to an authorized connection for the same team", async () => {

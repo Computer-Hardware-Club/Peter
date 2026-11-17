@@ -27,12 +27,14 @@ function setup(target = { closest: () => null }) {
         } }
     };
     const clipboard = { readText: async () => "fallback" };
+    const element = () => ({ append() {}, setAttribute() {}, addEventListener() {}, focus() {} });
     vm.runInNewContext(source, {
         angular: { module: () => ({ run: (registration) =>
             registration.at(-1)({ path: () => path }, { get: (name) => services[name] }, {
-                $on: (name, listener) => { broadcasts[name] = listener; }
+                $on: (name, listener) => { broadcasts[name] = listener; },
+                $watch() {}
             }) }) },
-        document: { activeElement: target },
+        document: { activeElement: target, body: element(), createElement: element },
         navigator: { clipboard },
         window: {
             addEventListener: (name, listener, capture) => {

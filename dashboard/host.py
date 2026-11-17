@@ -14,7 +14,7 @@ from workshop_templates import DEFAULT_RESOURCES, SLUG, load_template, portal_ur
 
 INSTALL = Path("/opt/workshop")
 EVENT = Path("/var/lib/workshop/event.json")
-LOGIN = re.compile(r"[a-z][a-z0-9-]{0,23}-[0-9a-f]{8}-team-[1-4](?:-[0-9a-f]{8})?")
+LOGIN = re.compile(r"[a-z][a-z0-9-]{0,23}-[0-9a-f]{8}-team-([1-4])(?:-[0-9a-f]{8})?")
 
 
 def run(*args, timeout=12):
@@ -56,13 +56,24 @@ def active_logins():
                      "workshop-web-1", "workshop-guacd-1", timeout=3).splitlines()
     if len(containers) != 2 or not all(line.startswith("true healthy ") for line in containers):
         raise RuntimeError("The portal is unavailable.")
-    started = containers[0].split()[-1]
-    if not re.fullmatch(r"[0-9T:Z.+-]+", started):
+    start_times = [line.split()[-1] for line in containers]
+    if not all(re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z", value)
+               for value in start_times):
         raise RuntimeError("The portal is unavailable.")
+    web, guacd = start_times
     sql = ("SELECT DISTINCT split_part(connection_name, '|', 1) FROM guacamole_connection_history "
-           f"WHERE connection_id IS NOT NULL AND end_date IS NULL AND start_date >= '{started}'::timestamptz;")
-    return set(run("docker", "exec", "--user", "postgres", "workshop-db-1", "psql",
-                   "-XqAt", "--dbname", "guacamole", "-c", sql, timeout=3).splitlines())
+           "WHERE connection_id IS NOT NULL AND end_date IS NULL "
+           f"AND start_date >= GREATEST('{web}'::timestamptz, '{guacd}'::timestamptz);")
+    history = run("docker", "exec", "--user", "postgres", "workshop-db-1", "psql",
+                  "-XqAt", "--dbname", "guacamole", "-c", sql, timeout=3).splitlines()
+    if not history:
+        return set()
+    # A killed guacd worker can leave an open PostgreSQL history row behind.
+    # Corroborate it with a live outbound SSH socket in guacd's namespace.
+    sockets = run("docker", "exec", "workshop-guacd-1", "netstat", "-tn", timeout=3)
+    live_slots = set(re.findall(r"^tcp\s+\d+\s+\d+\s+\S+\s+10\.241\.([1-4])\.2:22\s+ESTABLISHED\s*$",
+                                sockets, re.MULTILINE))
+    return {login for login in history if (match := LOGIN.fullmatch(login)) and match[1] in live_slots}
 
 
 def guest_statuses(event):

@@ -322,7 +322,7 @@ function renderTerminal(panel, team) {
   const unavailable = model.stateStale || team.active === null || entry?.failed;
   const hasFrame = Boolean(entry?.mirror.hasFrame);
   const label = team.resetting ? "Resetting" : unavailable ? (hasFrame ? "Stale" : "Unavailable")
-    : active ? (hasFrame ? "Live" : "Connecting") : (hasFrame ? "Recent" : "Idle");
+    : entry?.more ? "Catching up" : active ? (hasFrame ? "Live" : "Connecting") : (hasFrame ? "Recent" : "Idle");
   status.textContent = label;
   status.className = `terminal-status ${label.toLowerCase()}`;
   if (panel.dataset.username !== team.username) {
@@ -365,19 +365,17 @@ async function refreshScreen(team) {
   const current = () => model.screens.get(username) === entry && getTeam(slot)?.username === username;
   entry.loading = true;
   try {
-    let more;
-    do {
+    // Bound each team's replay work per poll even while the recording grows.
+    for (let count = 0; count < 4; count++) {
       const query = new URLSearchParams({ offset: entry.mirror.offset });
       if (entry.mirror.token) query.set("token", entry.mirror.token);
       const result = await api(`${teamPath(team, "screen")}?${query}`);
       if (!current()) return;
       if (result.team !== username || result.generation !== screenGeneration) return;
-      await entry.mirror.apply(result);
-      if (!current()) return;
-      Object.assign(entry, { storageLow: result.storageLow, failed: false });
-      renderScreens();
-      more = result.more;
-    } while (more && !document.hidden && (model.allTerminals || model.selected === slot));
+      entry.mirror.apply(result);
+      Object.assign(entry, { storageLow: result.storageLow, more: result.more, failed: false });
+      if (!result.more || document.hidden || (!model.allTerminals && model.selected !== slot)) break;
+    }
   } catch (error) {
     if (!current()) return;
     if (error.status === 401) {

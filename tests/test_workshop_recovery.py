@@ -2,6 +2,7 @@ from base64 import b64decode
 from copy import deepcopy
 from http.client import HTTPConnection
 import json
+import os
 from pathlib import Path
 import runpy
 import sys
@@ -53,6 +54,7 @@ class ProvisioningTest(unittest.TestCase):
         reset = workshop["reset"]
         with patch.dict(reset.__globals__, {
             "check_host": lambda *_: None,
+            "owned_resources": lambda *_: ({}, {}),
             "provision": lambda event, slots, **options: commands.append((slots, options)),
         }):
             reset(event, 1)
@@ -61,6 +63,18 @@ class ProvisioningTest(unittest.TestCase):
         self.assertTrue(team["resetting"])
         self.assertFalse(team["ready"])
         self.assertRegex(team["screen_generation"], r"^[0-9a-f]{12}$")
+
+    def test_reset_budgets_new_disk_space_only_for_missing_vms(self):
+        reset = workshop["reset"]
+        event = {"teams": [{}, {}], "resources": {"disk_gib": 10}}
+        capacity = []
+        with patch.dict(reset.__globals__, {
+            "owned_resources": lambda *_: ({"ws-team-1": {"status": "Running"}}, {}),
+            "check_host": lambda *args: capacity.append(args),
+            "provision": lambda *args, **options: None,
+        }):
+            reset(event, None)
+        self.assertEqual(capacity, [(1, 10)])
 
     def test_rebuild_updates_connection_without_recreating_account_or_id(self):
         grant = workshop["grant_access"]
@@ -209,6 +223,47 @@ class ScreenRecordingTest(unittest.TestCase):
             self.assertNotEqual(current["token"], first["token"])
             self.assertEqual(current["offset"], 3)
             self.assertEqual(b64decode(current["data"]), b"new")
+
+    def test_rotation_can_reuse_the_base_filename(self):
+        with TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            old = directory / "team-a.guac.2"
+            old.write_bytes(b"old")
+            os.utime(old, (1, 1))
+            (directory / "team-a.guac").write_bytes(b"latest")
+            self.assertEqual(b64decode(read_recording(directory, "team-a")["data"]), b"latest")
+
+    def test_pruning_keeps_the_latest_recording_per_slot(self):
+        prune = runpy.run_path(str(ROOT / "infra" / "prune-recordings.py"))["prune"]
+        with TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            old = directory / "demo-aaaaaaaa-team-1-aaaaaaaa.guac.1"
+            old.write_bytes(b"old")
+            os.utime(old, (1, 1))
+            newest = directory / "demo-aaaaaaaa-team-1-aaaaaaaa-rbbbbbbbbbbbb.guac"
+            newest.write_bytes(b"latest")
+            prune(directory, newest.stat().st_mtime_ns)
+            self.assertFalse(old.exists())
+            self.assertTrue(newest.exists())
+
+
+class ActiveSessionTest(unittest.TestCase):
+    def test_live_socket_is_required_for_open_history(self):
+        active_logins = host.__globals__["active_logins"]
+        web, guacd = "2026-11-16T09:00:00Z", "2026-11-16T09:30:00Z"
+        login, stale = "demo-aaaaaaaa-team-1-aaaaaaaa", "demo-aaaaaaaa-team-2-bbbbbbbb"
+
+        def run(*args, **options):
+            if args[1] == "inspect":
+                return f"true healthy {web}\ntrue healthy {guacd}"
+            if args[-1] == "-tn":
+                return ("tcp   0   0 172.31.253.4:1234 10.241.1.2:22 ESTABLISHED\n"
+                        "tcp   0   0 172.31.253.4:1235 10.241.2.2:22 TIME_WAIT\n")
+            self.assertIn(f"GREATEST('{web}'::timestamptz, '{guacd}'::timestamptz)", args[-1])
+            return f"{login}\n{stale}"
+
+        with patch.dict(host.__globals__, {"run": run}):
+            self.assertEqual(active_logins(), {login})
 
 
 class TemplateTest(unittest.TestCase):

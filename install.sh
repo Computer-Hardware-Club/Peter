@@ -4,6 +4,17 @@ set -euo pipefail
 umask 022
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 
+apply_portal=false
+case "${1:-}" in
+    '') ;;
+    --apply-portal) apply_portal=true ;;
+    *) echo 'Usage: install.sh [--apply-portal]' >&2; exit 2 ;;
+esac
+if (( $# > 1 )); then
+    echo 'Usage: install.sh [--apply-portal]' >&2
+    exit 2
+fi
+
 if [[ $EUID != 0 || $(dpkg --print-architecture) != amd64 ]]; then
     echo 'Run as root on the audited amd64 host.' >&2
     exit 1
@@ -16,7 +27,7 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y incus qemu-system-x86 ovmf docker.io docker-compose-v2 nftables curl openssh-client
+apt-get install -y --no-upgrade incus qemu-system-x86 ovmf docker.io docker-compose-v2 nftables curl openssh-client
 
 install -d -m 0755 /opt/workshop /opt/workshop/{infra,templates,docs,guest,portal-reset/extensions}
 install -d -m 0700 /var/lib/workshop /etc/workshop
@@ -26,7 +37,7 @@ if [[ $(pwd -P) != /opt/workshop ]]; then
     install -m 0644 workshop_templates.py /opt/workshop/
     install -m 0644 infra/*.* /opt/workshop/infra/
     install -d -m 0755 /opt/workshop/infra/guacd
-    install -m 0644 infra/guacd/{Dockerfile,terminal.patch,tunnel-cleanup.patch} /opt/workshop/infra/guacd/
+    install -m 0644 infra/guacd/{Dockerfile,terminal.patch,tunnel-cleanup.patch,recording.patch} /opt/workshop/infra/guacd/
     chmod 0755 /opt/workshop/infra/db-init.sh
     install -m 0644 templates/*.json /opt/workshop/templates/
     for manifest in templates/*/workshop.json; do
@@ -53,6 +64,7 @@ ln -sfn /opt/workshop/workshop /usr/local/sbin/workshop
 
 nft -c -f /opt/workshop/infra/firewall.nft
 install -m 0644 infra/workshop-*.service /etc/systemd/system/
+install -m 0644 infra/workshop-recordings.timer /etc/systemd/system/
 for service in incus docker; do
     install -D -m 0644 infra/require-firewall.conf "/etc/systemd/system/${service}.service.d/20-workshop-firewall.conf"
 done
@@ -60,6 +72,7 @@ systemctl daemon-reload
 systemctl enable --now workshop-firewall.service
 systemctl reload workshop-firewall.service
 systemctl enable --now incus.socket incus-startup.service docker.service
+systemctl enable --now workshop-recordings.timer
 
 if ! incus storage show workshop >/dev/null 2>&1; then
     incus storage create workshop dir
@@ -115,7 +128,31 @@ fi
 docker compose -f /opt/workshop/infra/compose.yaml \
     --env-file /var/lib/workshop/stack.env build guacd
 systemctl enable workshop-portal.service
-systemctl restart workshop-portal.service
+
+if $apply_portal; then
+    (
+        # Use the same lock as workshop so no event can start during reconciliation.
+        flock -x 9
+        if [[ -e /var/lib/workshop/event.json ]]; then
+            echo 'Portal changes are staged. End the workshop before applying them.' >&2
+            exit 1
+        fi
+        compose=(docker compose -f /opt/workshop/infra/compose.yaml --env-file /var/lib/workshop/stack.env)
+        previous_web=$("${compose[@]}" ps -q web)
+        "${compose[@]}" up -d --wait --wait-timeout 120
+        # The bind-mounted extension is only loaded when Guacamole starts.
+        if [[ -n $previous_web && $("${compose[@]}" ps -q web) == "$previous_web" ]]; then
+            "${compose[@]}" restart web
+            "${compose[@]}" up -d --wait --wait-timeout 120
+        fi
+        systemctl start workshop-portal.service
+    ) 9>>/var/lib/workshop/lock
+elif systemctl is-active --quiet workshop-portal.service ||
+     [[ -n $(docker ps -q --filter label=com.docker.compose.project=workshop) ]]; then
+    echo 'Portal changes are staged. Run install.sh --apply-portal between workshops to activate them.'
+else
+    systemctl start workshop-portal.service
+fi
 
 if ! command -v cloudflared >/dev/null; then
     curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg -o /usr/share/keyrings/cloudflare-main.gpg

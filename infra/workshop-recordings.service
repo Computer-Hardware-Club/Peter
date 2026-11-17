@@ -1,0 +1,7 @@
+[Unit]
+Description=Prune closed workshop screen recordings
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/workshop/infra/prune-recordings.py
