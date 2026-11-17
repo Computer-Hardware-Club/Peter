@@ -19,6 +19,7 @@ guest_file() {
 }
 active_assets() {
     docker inspect --format '{{.Id}} {{.Image}}' $("${compose[@]}" ps -q) | sort
+    docker image inspect --format '{{.Id}}' "$PETER_LAB_GUACD_IMAGE"
     sha256sum active/infra/compose.yaml active/portal-reset/extensions/workshop-reset.jar
     "${compose[@]}" exec -T web sha256sum /etc/guacamole/extensions/workshop-reset.jar
 }
@@ -41,6 +42,7 @@ case "$action" in
         exit ;;
     stage)
         active_assets > active.before
+        docker inspect --format '{{.Id}} {{.State.StartedAt}}' $("${compose[@]}" ps -q) | sort > starts.before
         mkdir -p stage-opt/workshop stage-varlib/workshop stage-source
         cp -a "$source_dir"/{install.sh,install-dashboard.sh,workshop,workshop_templates.py,build-template.sh,README.md,infra,templates,docs,guest,portal-reset,dashboard} stage-source/
         printf '
@@ -62,6 +64,7 @@ case "$action" in
             done
         '
         active_assets | diff -u active.before -
+        docker inspect --format '{{.Id}} {{.State.StartedAt}}' $("${compose[@]}" ps -q) | sort | diff -u starts.before -
         exit ;;
     restart-staged)
         "${compose[@]}" restart web
@@ -166,7 +169,10 @@ services:
     cpus: 2
     pids_limit: 128
     tmpfs: ["/recordings:size=128m,uid=1000,gid=1000,mode=0700"]
-    networks: [default, guest-link]
+    networks:
+      default: {}
+      guest-link:
+        ipv4_address: 10.241.1.3
     healthcheck:
       test: [CMD, nc, -z, 127.0.0.1, '4822']
       interval: 1s

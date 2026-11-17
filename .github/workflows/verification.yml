@@ -22,7 +22,8 @@ jobs:
         run: |
           node --test portal-reset/*.test.js
           python3 -m unittest discover -s tests -q
-          bash -n install.sh tests/portal-lab.sh
+          bash -n install.sh
+          bash -n tests/portal-lab.sh
       - name: Build and check guacd
         run: |
           docker build --tag peter-guacd:review-check infra/guacd
