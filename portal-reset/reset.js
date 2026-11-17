@@ -1,11 +1,11 @@
-/* global angular */
+/* global angular, Guacamole */
 (() => {
     "use strict";
 
     const TEAM = /^[a-z][a-z0-9-]{0,23}-[a-f0-9]{8}-team-([1-4])(?:-[a-f0-9]{8})?(?:\|(resetting|ready|failed)\|([a-f0-9]{12}))?$/;
     const POLL_MS = 1500;
-    const RECONNECT_MS = 30000;
-    const ATTEMPT_MS = 8000;
+    const RECONNECT_MS = 120000;
+    const ATTEMPT_MS = 15000;
 
     angular.module("index").run(["$rootScope", "$location", "$injector", ($rootScope, $location, $injector) => {
         const auth = $injector.get("authenticationService");
@@ -13,32 +13,45 @@
         const ClientIdentifier = $injector.get("ClientIdentifier");
         const states = $injector.get("ManagedClientState").ConnectionState;
         const terminalStates = [states.DISCONNECTED, states.CLIENT_ERROR, states.TUNNEL_ERROR];
+        const codes = Guacamole.Status.Code;
+        const transientCodes = new Set([
+            codes.SERVER_ERROR, codes.SERVER_BUSY, codes.UPSTREAM_TIMEOUT, codes.UPSTREAM_ERROR,
+            codes.RESOURCE_CLOSED, codes.UPSTREAM_NOT_FOUND, codes.UPSTREAM_UNAVAILABLE,
+            codes.CLIENT_TIMEOUT
+        ]);
 
         const overlay = document.createElement("div");
         const panel = document.createElement("div");
         const message = document.createElement("p");
         const progress = document.createElement("progress");
+        const retry = document.createElement("button");
         const signOut = document.createElement("button");
         overlay.className = "chc-vm-reset";
         overlay.hidden = true;
         panel.className = "chc-vm-reset__panel";
         message.setAttribute("role", "status");
-        progress.setAttribute("aria-label", "VM reset progress");
+        progress.setAttribute("aria-label", "Terminal recovery progress");
+        retry.type = "button";
+        retry.textContent = "Retry connection";
+        retry.addEventListener("click", () => {
+            if (current?.phase === "timed-out" && stillCurrent(current)) beginReconnect(current, current.reason);
+        });
         signOut.type = "button";
         signOut.textContent = "Sign out";
         signOut.addEventListener("click", () => $rootScope.$evalAsync(() => auth.logout().catch(() => {})));
-        panel.append(message, progress, signOut);
+        panel.append(message, progress, retry, signOut);
         overlay.append(panel);
         document.body.append(overlay);
 
         let current;
         let timer;
 
-        function status(text = "", busy = false) {
+        function status(text = "", busy = false, canRetry = false) {
             overlay.hidden = !text;
             if (message.textContent !== text) message.textContent = text;
             progress.hidden = !busy;
-            signOut.hidden = busy || !text;
+            retry.hidden = !canRetry;
+            signOut.hidden = !text;
         }
 
         function target() {
@@ -91,25 +104,27 @@
             });
         }
 
-        function reconnect(context) {
-            status("Connecting to your fresh VM…", true);
-            const now = Date.now();
-            const replacementState = context.replacement?.clientState.connectionState;
-            if (replacementState === states.CONNECTED) {
-                context.phase = "idle";
-                status();
-                return;
-            }
-            if (now >= context.deadline) {
-                context.phase = "timed-out";
-                status("Couldn’t reconnect to your VM. Ask a workshop officer for help.");
-                return;
-            }
-            if (now < context.retryAt) return;
-            if (replacementState && !terminalStates.includes(replacementState) && now < context.attemptDeadline) return;
+        function beginReconnect(context, reason) {
+            Object.assign(context, { phase: "reconnecting", reason, deadline: Date.now() + RECONNECT_MS,
+                retryAt: 0, attemptDeadline: 0, attempts: 0 });
+        }
 
-            context.replacement = manager.replaceManagedClient(context.clientId);
-            context.retryAt = now + POLL_MS;
+        function recoveryExpired(context, now) {
+            if (context.phase !== "reconnecting" || now < context.deadline) return false;
+            context.phase = "timed-out";
+            status("Couldn’t reconnect to your VM. Retry or ask a workshop officer for help.", false, true);
+            return true;
+        }
+
+        function reconnect(context, client) {
+            const now = Date.now();
+            if (recoveryExpired(context, now)) return;
+            status(context.reason === "reset" ? "Connecting to your fresh VM…" : "Reconnecting your terminal…", true);
+            if (now < context.retryAt) return;
+            if (!terminalStates.includes(client?.clientState.connectionState) && now < context.attemptDeadline) return;
+
+            manager.replaceManagedClient(context.clientId);
+            context.retryAt = now + Math.min(15000, POLL_MS * 2 ** context.attempts++);
             context.attemptDeadline = now + ATTEMPT_MS;
             $rootScope.$evalAsync(() => {});
         }
@@ -117,26 +132,38 @@
         function update(context, marker) {
             const changed = context.generation !== undefined && marker.generation !== context.generation;
             context.generation = marker.generation;
+            const client = manager.getManagedClientGroup(context.clientId).clients[0];
+            const state = client?.clientState.connectionState;
+            const terminal = terminalStates.includes(state);
+            const transient = state === states.DISCONNECTED
+                ? context.connected || context.phase === "reconnecting"
+                : transientCodes.has(client?.clientState.statusCode);
 
             if (marker.state === "resetting" || marker.state === "failed") {
                 if (changed || context.phase !== marker.state) {
                     context.phase = marker.state;
                     status(marker.state === "resetting" ? "Your VM is being reset…" :
                         "Your VM couldn’t be reset. Ask a workshop officer for help.", marker.state === "resetting");
-                    const client = manager.getManagedClientGroup(context.clientId).clients[0];
                     client?.client.disconnect();
                 }
                 return;
             }
-            if (marker.state !== "ready") return;
-
-            if (changed || context.phase === "resetting" || context.phase === "failed") {
-                context.phase = "reconnecting";
-                context.deadline = Date.now() + RECONNECT_MS;
-                context.retryAt = 0;
-                context.replacement = null;
+            if (marker.state === "ready" && (changed || context.phase === "resetting" || context.phase === "failed")) {
+                beginReconnect(context, "reset");
+            } else if (state === states.CONNECTED) {
+                context.connected = true;
+                context.phase = "idle";
+                status();
+                return;
+            } else if (terminal && !transient) {
+                // Guacamole can show the original error (including SSH authentication errors).
+                context.phase = "idle";
+                status();
+                return;
+            } else if (context.phase === "idle" && terminal) {
+                beginReconnect(context, "disconnect");
             }
-            if (context.phase === "reconnecting") reconnect(context);
+            if (context.phase === "reconnecting") reconnect(context, client);
         }
 
         async function check(context) {
@@ -144,7 +171,10 @@
                 const connection = await request(context, "connections/" + encodeURIComponent(context.id));
                 if (!stillCurrent(context)) return;
                 const marker = parseName(connection.name, context.username);
-                if (marker) update(context, marker);
+                if (marker) {
+                    context.confirmed = true;
+                    update(context, marker);
+                }
             } catch (error) {
                 if (!stillCurrent(context)) return;
                 if (error.type === "NOT_FOUND" || error.type === "PERMISSION_DENIED") {
@@ -152,7 +182,7 @@
                         await recoverOldUrl(context);
                     } catch (treeError) {
                         // If even the root directory is denied, the session cannot recover this URL.
-                        if (treeError.type === "PERMISSION_DENIED" || treeError.type === "INVALID_CREDENTIALS") {
+                        if (["PERMISSION_DENIED", "UNAUTHORIZED", "INVALID_CREDENTIALS"].includes(treeError.type)) {
                             if (stillCurrent(context)) stop();
                             return;
                         }
@@ -162,7 +192,10 @@
                     return;
                 }
             } finally {
-                if (stillCurrent(context)) timer = setTimeout(() => check(context), POLL_MS);
+                if (stillCurrent(context)) {
+                    recoveryExpired(context, Date.now());
+                    timer = setTimeout(() => check(context), POLL_MS);
+                }
             }
         }
 
@@ -176,10 +209,18 @@
             const context = current;
             timer = setTimeout(() => check(context), 0);
         });
-        $rootScope.$watch(() => current?.replacement?.clientState.connectionState, (state) => {
-            if (state === states.CONNECTED && current?.phase === "reconnecting" && stillCurrent(current)) {
-                current.phase = "idle";
-                status();
+        $rootScope.$watch(() => current && manager.getManagedClientGroup(current.clientId).clients[0]?.clientState.connectionState, (state) => {
+            if (!current || !stillCurrent(current)) return;
+            if (state === states.CONNECTED) {
+                current.connected = true;
+                if (current.phase === "reconnecting" || current.phase === "timed-out") {
+                    current.phase = "idle";
+                    status();
+                }
+            } else if (terminalStates.includes(state) && current.confirmed && current.phase === "idle") {
+                const client = manager.getManagedClientGroup(current.clientId).clients[0];
+                console.info("Workshop terminal disconnected", { time: new Date().toISOString(), state,
+                    statusCode: client?.clientState.statusCode });
             }
         });
         $rootScope.$on("guacLogout", stop);

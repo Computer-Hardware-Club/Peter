@@ -2,14 +2,17 @@ from base64 import b64decode
 from copy import deepcopy
 from http.client import HTTPConnection
 import json
+import os
 from pathlib import Path
 import runpy
+import subprocess
 import sys
 from tempfile import TemporaryDirectory
 import threading
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+from zipfile import ZipFile
 from workshop_templates import load_template, team_limit
 
 
@@ -53,6 +56,7 @@ class ProvisioningTest(unittest.TestCase):
         reset = workshop["reset"]
         with patch.dict(reset.__globals__, {
             "check_host": lambda *_: None,
+            "owned_resources": lambda *_: ({}, {}),
             "provision": lambda event, slots, **options: commands.append((slots, options)),
         }):
             reset(event, 1)
@@ -61,6 +65,18 @@ class ProvisioningTest(unittest.TestCase):
         self.assertTrue(team["resetting"])
         self.assertFalse(team["ready"])
         self.assertRegex(team["screen_generation"], r"^[0-9a-f]{12}$")
+
+    def test_reset_budgets_new_disk_space_only_for_missing_vms(self):
+        reset = workshop["reset"]
+        event = {"teams": [{}, {}], "resources": {"disk_gib": 10}}
+        capacity = []
+        with patch.dict(reset.__globals__, {
+            "owned_resources": lambda *_: ({"ws-team-1": {"status": "Running"}}, {}),
+            "check_host": lambda *args: capacity.append(args),
+            "provision": lambda *args, **options: None,
+        }):
+            reset(event, None)
+        self.assertEqual(capacity, [(1, 10)])
 
     def test_rebuild_updates_connection_without_recreating_account_or_id(self):
         grant = workshop["grant_access"]
@@ -143,7 +159,7 @@ class DashboardHostTest(unittest.TestCase):
         with patch.dict(host.__globals__, {
             "event_state": lambda: deepcopy(self.event),
             "guest_statuses": lambda _: {"ws-team-1": "Running", "ws-team-2": "Stopped"},
-            "active_logins": unavailable,
+            "cached_active_logins": lambda _: unavailable(),
         }):
             result = host({"op": "state"})
             self.assertEqual([team["status"] for team in result["event"]["teams"]], ["Running", "Stopped"])
@@ -209,6 +225,104 @@ class ScreenRecordingTest(unittest.TestCase):
             self.assertNotEqual(current["token"], first["token"])
             self.assertEqual(current["offset"], 3)
             self.assertEqual(b64decode(current["data"]), b"new")
+
+    def test_rotation_can_reuse_the_base_filename(self):
+        with TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            old = directory / "team-a.guac.2"
+            old.write_bytes(b"old")
+            os.utime(old, (1, 1))
+            (directory / "team-a.guac").write_bytes(b"latest")
+            self.assertEqual(b64decode(read_recording(directory, "team-a")["data"]), b"latest")
+
+    def test_pruning_retains_a_locked_recording_until_its_writer_exits(self):
+        prune = runpy.run_path(str(ROOT / "infra" / "prune-recordings.py"))["prune"]
+        with TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            prefix = "demo-aaaaaaaa-team-1-aaaaaaaa.guac"
+            old, active, newest = (directory / f"{prefix}.{suffix}" for suffix in (1, 2, 3))
+            for path, stamp in ((old, 1), (active, 2), (newest, 100)):
+                path.write_bytes(b"fixture")
+                os.utime(path, (stamp, stamp))
+            with subprocess.Popen(
+                [sys.executable, "-c",
+                 "import fcntl, sys; "
+                 "f = open(sys.argv[1], 'r+b'); fcntl.lockf(f, fcntl.LOCK_EX); "
+                 "print('locked', flush=True); sys.stdin.read()", str(active)],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+            ) as writer:
+                try:
+                    self.assertEqual(writer.stdout.readline(), "locked\n")
+                    prune(directory, newest.stat().st_mtime_ns)
+                    self.assertFalse(old.exists())
+                    self.assertTrue(active.exists())
+                    self.assertTrue(newest.exists())
+                finally:
+                    writer.communicate(timeout=3)
+            prune(directory, newest.stat().st_mtime_ns)
+            self.assertFalse(active.exists())
+            self.assertTrue(newest.exists())
+
+
+class ReleasePreparationTest(unittest.TestCase):
+    def test_prepare_merges_local_compose_and_effective_extension(self):
+        helper = runpy.run_path(str(ROOT / "infra" / "prepare-release.py"))
+        with TemporaryDirectory() as tmp:
+            release, baseline, candidate = (Path(tmp) / part for part in ("release", "base", "candidate"))
+            extension = helper["JAR"]
+            for tree in (release, baseline, candidate):
+                (tree / "infra").mkdir(parents=True)
+                (tree / extension.parent).mkdir(parents=True)
+                for asset in helper["EXTENSION"]:
+                    (tree / extension.parent.parent / asset).write_text("header\n")
+            common = "one\ntwo\nthree\nfour\nfive\nsix\n"
+            for tree, image, port in ((release, "new", "8080"), (baseline, "old", "8080"),
+                                      (candidate, "old", "9000")):
+                (tree / "infra/compose.yaml").write_text(f"image: {image}\n{common}port: {port}\n")
+            (candidate / "infra/site-vpn.conf").write_text("keep local settings\n")
+            with ZipFile(candidate / extension, "w") as archive:
+                archive.writestr("clipboard.js", "custom clipboard integration\n")
+                archive.writestr("local.js", "extra local asset\n")
+            (release / "portal-reset/reset.js").write_text("new reconnect logic\n")
+
+            helper["prepare"](release, baseline, candidate)
+
+            self.assertEqual((candidate / "infra/compose.yaml").read_text(),
+                             f"image: new\n{common}port: 9000\n")
+            self.assertEqual((candidate / "infra/site-vpn.conf").read_text(), "keep local settings\n")
+            with ZipFile(candidate / extension) as archive:
+                self.assertEqual(archive.read("clipboard.js"), b"custom clipboard integration\n")
+                self.assertEqual(archive.read("reset.js"), b"new reconnect logic\n")
+                self.assertEqual(archive.read("local.js"), b"extra local asset\n")
+            self.assertEqual((candidate / ".release-base/infra/compose.yaml").read_text(),
+                             f"image: new\n{common}port: 8080\n")
+
+    def test_prepare_refuses_an_unresolved_local_change(self):
+        prepare = runpy.run_path(str(ROOT / "infra" / "prepare-release.py"))["prepare"]
+        with TemporaryDirectory() as tmp:
+            release, baseline, candidate = (Path(tmp) / part for part in ("release", "base", "candidate"))
+            for tree, value in ((release, "upstream"), (baseline, "base"), (candidate, "local")):
+                tree.mkdir()
+                (tree / "workshop").write_text(value + "\n")
+            with self.assertRaisesRegex(SystemExit, "Reconcile local changes.*workshop"):
+                prepare(release, baseline, candidate)
+            self.assertEqual((candidate / "workshop").read_text(), "local\n")
+
+
+class ActiveSessionTest(unittest.TestCase):
+    def test_live_socket_is_required_for_open_history(self):
+        active_logins = host.__globals__["active_logins"]
+        web, guacd = "2026-11-16T09:00:00Z", "2026-11-16T09:30:00Z"
+        login, stale = "demo-aaaaaaaa-team-1-aaaaaaaa", "demo-aaaaaaaa-team-2-bbbbbbbb"
+
+        def run(*args, **options):
+            if args[1] == "inspect":
+                return f"true healthy {web} 123\ntrue healthy {guacd} 456"
+            self.assertIn(f"GREATEST('{web}'::timestamptz, '{guacd}'::timestamptz)", args[-1])
+            return f"{login}\n{stale}"
+
+        with patch.dict(host.__globals__, {"run": run, "live_ssh_slots": lambda pid: {"1"} if pid == 456 else set()}):
+            self.assertEqual(active_logins(), {login})
 
 
 class TemplateTest(unittest.TestCase):

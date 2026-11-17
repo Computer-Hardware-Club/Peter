@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Privileged local socket endpoint. The web process can request only workshop actions."""
 
+import fcntl
 import json
 from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 
 from mirror import read_recording
 
@@ -14,7 +16,9 @@ from workshop_templates import DEFAULT_RESOURCES, SLUG, load_template, portal_ur
 
 INSTALL = Path("/opt/workshop")
 EVENT = Path("/var/lib/workshop/event.json")
-LOGIN = re.compile(r"[a-z][a-z0-9-]{0,23}-[0-9a-f]{8}-team-[1-4](?:-[0-9a-f]{8})?")
+SESSION_CACHE = Path("/run/workshop-session-status.json")
+SESSION_TTL = 1.5
+LOGIN = re.compile(r"[a-z][a-z0-9-]{0,23}-[0-9a-f]{8}-team-([1-4])(?:-[0-9a-f]{8})?")
 
 
 def run(*args, timeout=12):
@@ -50,19 +54,54 @@ def event_state():
         return None
 
 
+def live_ssh_slots(pid):
+    # /proc exposes the container's network namespace through its init PID.
+    # IPv4 endpoints use little-endian hex on Peter's amd64 host.
+    entries = Path(f"/proc/{pid}/net/tcp").read_text().splitlines()
+    peers = {fields[2] for line in entries[1:] if len(fields := line.split()) >= 4 and fields[3] == "01"}
+    return {str(slot) for slot in range(1, 5) if f"02{slot:02X}F10A:0016" in peers}
+
+
 def active_logins():
     containers = run("docker", "inspect", "--format",
-                     "{{.State.Running}} {{.State.Health.Status}} {{.State.StartedAt}}",
+                     "{{.State.Running}} {{.State.Health.Status}} {{.State.StartedAt}} {{.State.Pid}}",
                      "workshop-web-1", "workshop-guacd-1", timeout=3).splitlines()
-    if len(containers) != 2 or not all(line.startswith("true healthy ") for line in containers):
+    healthy = r"true healthy (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z) ([1-9]\d*)"
+    matches = [re.fullmatch(healthy, line) for line in containers]
+    if len(matches) != 2 or not all(matches):
         raise RuntimeError("The portal is unavailable.")
-    started = containers[0].split()[-1]
-    if not re.fullmatch(r"[0-9T:Z.+-]+", started):
-        raise RuntimeError("The portal is unavailable.")
+    web, guacd = (match[1] for match in matches)
     sql = ("SELECT DISTINCT split_part(connection_name, '|', 1) FROM guacamole_connection_history "
-           f"WHERE connection_id IS NOT NULL AND end_date IS NULL AND start_date >= '{started}'::timestamptz;")
-    return set(run("docker", "exec", "--user", "postgres", "workshop-db-1", "psql",
-                   "-XqAt", "--dbname", "guacamole", "-c", sql, timeout=3).splitlines())
+           "WHERE connection_id IS NOT NULL AND end_date IS NULL "
+           f"AND start_date >= GREATEST('{web}'::timestamptz, '{guacd}'::timestamptz);")
+    history = run("docker", "exec", "--user", "postgres", "workshop-db-1", "psql",
+                  "-XqAt", "--dbname", "guacamole", "-c", sql, timeout=3).splitlines()
+    if not history:
+        return set()
+    # A killed guacd worker can leave an open PostgreSQL history row behind.
+    # Corroborate it with a live outbound SSH socket in guacd's namespace.
+    live_slots = live_ssh_slots(int(matches[1][2]))
+    return {login for login in history if (match := LOGIN.fullmatch(login)) and match[1] in live_slots}
+
+
+def cached_active_logins(event_run):
+    # Each dashboard socket request starts a process. Share one short-lived
+    # snapshot across officer polls and let only one process refresh it.
+    with SESSION_CACHE.open("a+") as cache:
+        fcntl.flock(cache, fcntl.LOCK_EX)
+        cache.seek(0)
+        try:
+            snapshot = json.load(cache)
+        except ValueError:
+            snapshot = {}
+        if (snapshot.get("event") == event_run and
+                0 <= time.monotonic() - snapshot["time"] < SESSION_TTL):
+            return set(snapshot["logins"])
+        cache.seek(0)
+        cache.truncate()
+        logins = active_logins()
+        json.dump({"event": event_run, "time": time.monotonic(), "logins": sorted(logins)}, cache)
+        return logins
 
 
 def guest_statuses(event):
@@ -88,7 +127,7 @@ def state():
         statuses = None
         warnings.append("Peter could not check VM status. Retrying…")
     try:
-        active = active_logins()
+        active = cached_active_logins(event["run"])
     except (OSError, RuntimeError, subprocess.TimeoutExpired):
         active = None
         warnings.append("The participant portal is unavailable. Session status is unknown.")

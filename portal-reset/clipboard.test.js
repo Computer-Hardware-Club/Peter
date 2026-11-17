@@ -27,12 +27,14 @@ function setup(target = { closest: () => null }) {
         } }
     };
     const clipboard = { readText: async () => "fallback" };
+    const element = () => ({ append() {}, setAttribute() {}, addEventListener() {}, focus() {} });
     vm.runInNewContext(source, {
         angular: { module: () => ({ run: (registration) =>
             registration.at(-1)({ path: () => path }, { get: (name) => services[name] }, {
-                $on: (name, listener) => { broadcasts[name] = listener; }
+                $on: (name, listener) => { broadcasts[name] = listener; },
+                $watch() {}
             }) }) },
-        document: { activeElement: target },
+        document: { activeElement: target, body: element(), createElement: element },
         navigator: { clipboard },
         window: {
             addEventListener: (name, listener, capture) => {
@@ -125,6 +127,7 @@ test("copies the terminal selection and preserves Ctrl+C for interrupt", () => {
     const { dispatch, select } = setup();
     select("terminal selection");
     assert.equal(dispatch("keydown", { ctrlKey: true, key: "c" }).stopped, undefined);
+    assert.equal(dispatch("keydown", { ctrlKey: true, shiftKey: true, key: "C" }).stopped, undefined);
     assert.equal(dispatch("keydown", { metaKey: true, key: "c" }).stopped, true);
     const copied = [];
     const event = dispatch("copy", { clipboardData: { setData: (...args) => copied.push(args) } });

@@ -1,0 +1,76 @@
+name: Verification
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  portal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Unit and syntax tests
+        run: |
+          node --test portal-reset/*.test.js
+          python3 -m unittest discover -s tests -q
+          bash -n install.sh
+          bash -n tests/portal-lab.sh
+      - name: Build and check guacd
+        run: |
+          docker build --tag peter-guacd:review-check infra/guacd
+          docker run --rm --entrypoint /opt/guacamole/sbin/guacd peter-guacd:review-check -v
+          (
+            cd infra/guacd
+            docker run --rm --entrypoint cat peter-guacd:review-check /opt/guacamole/peter-guacd-patches.sha256 | sha256sum -c -
+          )
+      - name: Exercise the browser and SSH tunnel
+        run: |
+          npm install --prefix "$RUNNER_TEMP/peter-browser" --no-save --ignore-scripts playwright@1.65.1
+          "$RUNNER_TEMP/peter-browser/node_modules/.bin/playwright" install --with-deps chromium
+          bash tests/portal-lab.sh up "$RUNNER_TEMP/peter-portal"
+          bash tests/portal-lab.sh size-cap "$RUNNER_TEMP/peter-portal"
+          NODE_PATH="$RUNNER_TEMP/peter-browser/node_modules" PETER_LAB_URL=http://127.0.0.1:18081 \
+            PETER_LAB_CONTROL=tests/portal-lab.sh PETER_LAB_DIR="$RUNNER_TEMP/peter-portal" node tests/browser-checks.js
+          bash tests/portal-lab.sh probe "$RUNNER_TEMP/peter-portal"
+      - name: Activate and roll back releases on the disposable runner
+        run: |
+          if ! command -v nft >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y nftables
+          fi
+          sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT bash tests/release-lab.sh "$RUNNER_TEMP"
+      - name: Collect lab logs
+        if: failure()
+        run: bash tests/portal-lab.sh logs "$RUNNER_TEMP/peter-portal"
+      - name: Remove lab
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/peter-portal/active/infra/compose.yaml" ]; then
+            bash tests/portal-lab.sh down "$RUNNER_TEMP/peter-portal"
+          fi
+
+  windows-clipboard:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Exercise Chromium clipboard permissions and fallbacks
+        shell: pwsh
+        run: |
+          $browserDir = Join-Path $env:RUNNER_TEMP 'peter-browser'
+          npm install --prefix $browserDir --no-save --ignore-scripts playwright@1.65.1
+          & "$browserDir/node_modules/.bin/playwright.cmd" install chromium
+          $env:NODE_PATH = Join-Path $browserDir 'node_modules'
+          node tests/browser-checks.js

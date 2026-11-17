@@ -1,0 +1,122 @@
+diff --git a/src/libguac/guacamole/socket.h b/src/libguac/guacamole/socket.h
+index 6075f39..ff26414 100644
+--- a/src/libguac/guacamole/socket.h
++++ b/src/libguac/guacamole/socket.h
+@@ -177,6 +177,13 @@ void guac_socket_instruction_end(guac_socket* socket);
+  */
+ guac_socket* guac_socket_open(int fd);
+
++/**
++ * Opens a recording socket which stops writing after the given byte limit,
++ * or when its filesystem runs low on space. The socket discards further writes
++ * to keep recording backpressure separate from the participant's connection.
++ */
++guac_socket* guac_socket_open_recording(int fd, size_t limit);
++
+ /**
+  * Allocates and initializes a new guac_socket which writes all data via
+  * nest instructions to the given existing, open guac_socket. Freeing the
+diff --git a/src/libguac/recording.c b/src/libguac/recording.c
+index 7e36f46..557910f 100644
+--- a/src/libguac/recording.c
++++ b/src/libguac/recording.c
+@@ -171,7 +171,10 @@ guac_recording* guac_recording_create(guac_client* client,
+
+     /* Create recording structure with reference to underlying socket */
+     guac_recording* recording = guac_mem_alloc(sizeof(guac_recording));
+-    recording->socket = guac_socket_open(fd);
++    /* Peter uses a shared 512 MiB tmpfs. Bound individual recordings. */
++    recording->socket = !strcmp(path, "/recordings")
++        ? guac_socket_open_recording(fd, 48 * 1024 * 1024)
++        : guac_socket_open(fd);
+     recording->include_output = include_output;
+     recording->include_mouse = include_mouse;
+     recording->include_touch = include_touch;
+diff --git a/src/libguac/socket-fd.c b/src/libguac/socket-fd.c
+index 5c1b463..bf7a08b 100644
+--- a/src/libguac/socket-fd.c
++++ b/src/libguac/socket-fd.c
+@@ -32,6 +32,10 @@
+ #include <sys/time.h>
+ #include <unistd.h>
+
++#ifdef __linux__
++#include <sys/statvfs.h>
++#endif
++
+ #ifdef ENABLE_WINSOCK
+ #include <winsock2.h>
+ #endif
+@@ -46,6 +50,11 @@ typedef struct guac_socket_fd_data {
+      */
+     int fd;
+
++    /* These fields are used only for Peter's recording files. */
++    size_t recording_remaining;
++    int recording;
++    int recording_paused;
++
+     /**
+      * The number of bytes currently in the main write buffer.
+      */
+@@ -96,6 +105,26 @@ ssize_t guac_socket_fd_write(guac_socket* socket,
+     guac_socket_fd_data* data = (guac_socket_fd_data*) socket->data;
+     const char* buffer = buf;
+
++#ifdef __linux__
++    if (data->recording) {
++        if (data->recording_paused)
++            return 0;
++
++        struct statvfs storage;
++        const unsigned long reserve = 16 * 1024 * 1024;
++        if (count > data->recording_remaining
++                || (fstatvfs(data->fd, &storage) == 0
++                    && storage.f_frsize
++                    && storage.f_bavail <= reserve / storage.f_frsize)) {
++            data->recording_paused = 1;
++            fprintf(stderr, "Workshop screen recording paused at its size or storage limit.\n");
++            return 0;
++        }
++
++        data->recording_remaining -= count;
++    }
++#endif
++
+     /* Write until completely written */
+     while (count > 0) {
+
+@@ -111,6 +140,11 @@ ssize_t guac_socket_fd_write(guac_socket* socket,
+
+         /* Record errors in guac_error */
+         if (retval < 0) {
++            if (data->recording) {
++                data->recording_paused = 1;
++                fprintf(stderr, "Workshop screen recording paused after a write error.\n");
++                return 0;
++            }
+             guac_error = GUAC_STATUS_SEE_ERRNO;
+             guac_error_message = "Error writing data to socket";
+             return retval;
+@@ -428,6 +462,9 @@ guac_socket* guac_socket_open(int fd) {
+
+     /* Store file descriptor as socket data */
+     data->fd = fd;
++    data->recording = 0;
++    data->recording_paused = 0;
++    data->recording_remaining = 0;
+     data->written = 0;
+     socket->data = data;
+
+@@ -451,3 +488,11 @@ guac_socket* guac_socket_open(int fd) {
+
+ }
+
++
++guac_socket* guac_socket_open_recording(int fd, size_t limit) {
++    guac_socket* socket = guac_socket_open(fd);
++    guac_socket_fd_data* data = (guac_socket_fd_data*) socket->data;
++    data->recording = 1;
++    data->recording_remaining = limit;
++    return socket;
++}

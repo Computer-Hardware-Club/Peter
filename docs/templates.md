@@ -50,7 +50,7 @@ From a checkout, validate your definition without root:
 ./workshop validate-template hello-lab
 ```
 
-Install the entire template directory to the root-owned catalog on a server that already runs Peter. You can also install bundled templates by running `sudo ./install.sh` from the checkout.
+Install the entire template directory to the root-owned catalog on a server that already runs Peter. You can also install bundled templates by staging with `sudo ./install.sh` from the checkout and applying the release between workshops.
 
 ```sh
 sudo install -d -m 0755 /opt/workshop/templates/hello-lab

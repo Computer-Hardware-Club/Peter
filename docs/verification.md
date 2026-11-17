@@ -16,7 +16,35 @@ Audited November 10, 2026 over Peter’s existing SSH connection.
 
 Peter keeps its existing SSH, DHCP, interface configuration, and disk layout. The workshop uses at most eight vCPUs even though the hardware has more capacity. During the audit, Ubuntu’s `lxc` compatibility launcher unexpectedly began a snap install. The action was aborted and no LXD snap was installed.
 
-## Local acceptance
+## Current regression checks
+
+Run `node --test portal-reset/*.test.js` and `python3 -m unittest discover -s tests -q`. The [Verification workflow](../.github/workflows/verification.yml) also builds the patched 1.6.0 guacd image from the checksummed Apache release and verifies its embedded patch manifest. It tests the Windows Chromium clipboard paths and uses a disposable Guacamole, PostgreSQL, and SSH stack to check sustained terminal output and automatic recovery after a WebSocket interruption. The Windows job drives trusted Chromium keyboard events against the extension with a fixture client. The Linux job waits for guest-side command completion and verifies WebSocket continuity, pauses recording on a live terminal at the storage reserve, and independently checks the 48 MiB cap against the built image's recording writer. It also stages with a connected participant, restarts the disposable web container, and measures concurrent session polls against guacd's real Linux network namespace.
+
+The Linux job also runs `tests/release-lab.sh` on its disposable Ubuntu runner. It seeds a prior installation and runs the actual installer against systemd, PostgreSQL, Guacamole and the dashboard. It checks that apply and rollback skip dashboard setup on a portal-only installation, that staging preserves the running services and officer sign-in, and that both operations refuse an active event. It verifies the versions loaded by the running services, preserved configuration and database access, officer reauthentication after apply and rollback, and recovery from an injected dashboard startup failure. It restarts both services after apply and rollback and verifies the running release each time. The event guard uses a fixture state file. HTTPS access through a real Tailscale or LAN connection, Incus provisioning, and host reboot require separate host acceptance.
+
+For an acceptance pass between events, check the installed Compose file, terminal extension, and custom network configuration under `/opt/workshop` first. Compare the running guacd image ID with the intended release and compare its `/opt/guacamole/peter-guacd-patches.sha256` to the checkout. Confirm the dashboard and portal respond before launching a disposable two-team Debian 13 event. Attach both teams and test the following on the public hostname and the direct loopback SSH forward where applicable.
+
+- In Windows Chrome, select terminal text and click **Copy selection**, then paste it into a local editor. The portal leaves `Ctrl+Shift+C` available to the browser, where it can open DevTools. Deny clipboard permission and repeat with the selectable fallback. Use **Paste text** to send text from the manual field. Confirm `Ctrl+C` still interrupts a running command.
+- Disconnect one browser’s network, then restore it and confirm the same route opens a fresh SSH shell. Reset a disposable VM with the connection open and verify the same credentials work after the replacement becomes ready. Check **Retry connection** if recovery exceeds two minutes.
+- Generate sustained output on both teams. Confirm they remain responsive and the officer dashboard can switch views while replay catches up. Confirm recording rotation leaves open files alone and retains the latest screen. Screen capture pauses at 48 MiB per recording or when the shared tmpfs reaches its 16 MiB reserve.
+- Stage the installer while a disposable terminal is connected. Confirm the web and guacd container IDs and start times stay stable. End the event before applying the staged portal changes.
+
+### Investigate high-output disconnects
+
+Use disposable sessions and reproduce the same command on public HTTPS and through `ssh -L 18080:127.0.0.1:8080 192.168.1.12`. Record UTC timestamps, the browser WebSocket close code, and the `Workshop terminal disconnected` console event and status code. Avoid sharing WebSocket URLs and frames because they may contain access tokens or session data. In the same time window, compare the following on Peter.
+
+```sh
+sudo docker inspect --format '{{.Name}} {{.Image}} {{.State.StartedAt}} {{.RestartCount}} {{.State.OOMKilled}}' workshop-guacd-1 workshop-web-1
+sudo docker logs --since 10m --timestamps workshop-guacd-1
+sudo docker logs --since 10m --timestamps workshop-web-1
+sudo docker stats --no-stream workshop-guacd-1 workshop-web-1
+sudo docker exec workshop-guacd-1 sh -c 'cat /sys/fs/cgroup/memory.events; df -k /recordings'
+sudo journalctl -u workshop-tunnel --since '10 minutes ago' --utc
+```
+
+The historical acceptance checks below document earlier installations. The high-output trigger reported in the review still needs a paired reproduction on Peter’s deployed portal.
+
+## Historical local acceptance
 
 Used a disposable four-team event on Peter and Chrome through the loopback SSH forward. The test authenticated to the actual Guacamole portal and sent commands through its WebSocket SSH terminal.
 

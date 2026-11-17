@@ -31,7 +31,7 @@ services:
       start_period: 30s
 
   guacd:
-    image: peter-guacd:1.6.0-tunnel-shutdown
+    image: peter-guacd:1.6.0-recording-limits
     build: ./guacd
     restart: unless-stopped
     logging: {driver: local}
