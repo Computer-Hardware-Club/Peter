@@ -71,7 +71,7 @@ sign_in() {
 
 configuration() {
     sha256sum "$active/infra/compose.override.yaml" "$state/stack.env" \
-        /etc/workshop/dashboard/{listen.env,officer-password,tls.crt,tls.key} \
+        /etc/workshop/dashboard/{listen.env,officer-password,lan-ca.crt,tls-address,tls.crt,tls.key} \
         /etc/systemd/system/workshop-{portal,firewall,dashboard,dashboard-serve-guard,recordings}.service \
         /etc/systemd/system/workshop-{dashboard-host.socket,dashboard-host@.service,recordings.timer} \
         /etc/systemd/system/workshop-dashboard.service.d/{tailscale.conf,release-lab.conf}
@@ -109,6 +109,23 @@ verify_release() {
     printf 'Verified %s release in the portal containers and dashboard (guacd %s).\n' "$version" "$image"
 }
 
+verify_no_dashboard() {
+    [[ ! -e /etc/workshop/dashboard ]]
+    local unit
+    for unit in workshop-dashboard.service workshop-dashboard-host.socket workshop-dashboard-serve-guard.service; do
+        [[ $(systemctl show --property=LoadState --value "$unit") == not-found ]]
+    done
+}
+
+verify_event_guard() {
+    local option=$1 output
+    if output=$("${installer[@]}" "$option" 2>&1); then
+        echo "$option unexpectedly succeeded during an event." >&2
+        exit 1
+    fi
+    grep -F 'End the workshop before changing the active release.' <<< "$output"
+}
+
 # Seed an installed release and its merge base from the real staging path.
 sed -i '/XDG_CACHE_HOME: /a\      PETER_RELEASE_FIXTURE: before' "$source/infra/compose.yaml"
 sed -i '/self.send_response(status)/a\        self.send_header("X-Peter-Release-Fixture", "before")' "$source/dashboard/server.py"
@@ -131,6 +148,22 @@ printf 'POSTGRES_PASSWORD=release-admin-password\nPOSTGRESQL_PASSWORD=release-ap
 )
 docker run --rm --network none guacamole/guacamole:1.6.0 /opt/guacamole/bin/initdb.sh --postgresql > "$state/schema.sql"
 install -m 0644 "$active"/infra/workshop-{portal,firewall,recordings}.service "$active"/infra/workshop-recordings.timer /etc/systemd/system/
+"${compose[@]}" build guacd
+systemctl enable --now workshop-firewall.service workshop-portal.service workshop-recordings.timer
+sql "CREATE TABLE release_fixture (value text); INSERT INTO release_fixture VALUES ('retained'); GRANT SELECT ON release_fixture TO guacamole;"
+
+set_version after
+cp "$source/infra/compose.yaml" "$lab/after.compose"
+cp "$source/portal-reset/reset.js" "$lab/after.reset"
+"${installer[@]}" --stage
+"${installer[@]}" --apply-portal
+cmp "$lab/after.compose" "$active/infra/compose.yaml"
+verify_no_dashboard
+"${installer[@]}" --rollback-portal
+cmp "$lab/before.compose" "$active/infra/compose.yaml"
+verify_no_dashboard
+printf 'Apply and rollback left the portal-only installation without a dashboard.\n'
+
 install -d -m 0700 /etc/workshop/dashboard
 install -m 0600 /dev/null /etc/workshop/dashboard/officer-password
 printf '%s\n' "$officer_password" > /etc/workshop/dashboard/officer-password
@@ -141,9 +174,6 @@ Restart=no
 ExecStartPre=+/usr/bin/test ! -e /var/lib/workshop/fail-dashboard
 UNIT
 bash "$active/install-dashboard.sh" --tailscale "$host" "$login"
-"${compose[@]}" build guacd
-systemctl enable --now workshop-firewall.service workshop-portal.service workshop-recordings.timer
-sql "CREATE TABLE release_fixture (value text); INSERT INTO release_fixture VALUES ('retained'); GRANT SELECT ON release_fixture TO guacamole;"
 configuration > "$lab/configuration"
 docker volume inspect workshop_database > "$lab/database"
 verify_release before
@@ -154,20 +184,12 @@ cookie=$(sign_in)
 
 printf '{}\n' > "$state/event.json"
 runtime_identity > "$lab/runtime"
-set_version after
-cp "$source/infra/compose.yaml" "$lab/after.compose"
-cp "$source/portal-reset/reset.js" "$lab/after.reset"
 "${installer[@]}" --stage
-for option in --apply-portal --rollback-portal; do
-    if output=$("${installer[@]}" "$option" 2>&1); then
-        echo "$option unexpectedly succeeded during an event." >&2
-        exit 1
-    fi
-    grep -F 'End the workshop before changing the active release.' <<< "$output"
-done
+verify_event_guard --apply-portal
 runtime_identity | diff -u "$lab/runtime" -
 verify_release before
 rm "$state/event.json"
+"${dashboard[@]}" --fail -b "$cookie" "$dashboard_url/api/state" > /dev/null
 
 # Make the dashboard refuse to start after the tree/image switch, then
 # clear the fault and use the documented rollback to recover both services.
@@ -188,10 +210,22 @@ cookie=$(sign_in)
 verify_release after
 [[ $(docker inspect --format '{{.Image}}' workshop-guacd-1) != "$before_image" ]]
 [[ $("${dashboard[@]}" -b "$cookie" -o /dev/null -w '%{http_code}' "$dashboard_url/api/state") == 401 ]]
-"${dashboard[@]}" --fail -b "$(sign_in)" "$dashboard_url/api/state" > /dev/null
+systemctl restart workshop-portal.service workshop-dashboard.service
+verify_release after
+cookie=$(sign_in)
+"${dashboard[@]}" --fail -b "$cookie" "$dashboard_url/api/state" > /dev/null
+
+printf '{}\n' > "$state/event.json"
+runtime_identity > "$lab/runtime"
+verify_event_guard --rollback-portal
+runtime_identity | diff -u "$lab/runtime" -
+rm "$state/event.json"
+"${dashboard[@]}" --fail -b "$cookie" "$dashboard_url/api/state" > /dev/null
 
 "${installer[@]}" --rollback-portal
 verify_release before
 [[ $(docker inspect --format '{{.Image}}' workshop-guacd-1) == "$before_image" ]]
+[[ $("${dashboard[@]}" -b "$cookie" -o /dev/null -w '%{http_code}' "$dashboard_url/api/state") == 401 ]]
+"${dashboard[@]}" --fail -b "$(sign_in)" "$dashboard_url/api/state" > /dev/null
 systemctl restart workshop-portal.service workshop-dashboard.service
 verify_release before
