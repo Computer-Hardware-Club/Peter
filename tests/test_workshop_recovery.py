@@ -12,6 +12,7 @@ import threading
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+from zipfile import ZipFile
 from workshop_templates import load_template, team_limit
 
 
@@ -261,6 +262,51 @@ class ScreenRecordingTest(unittest.TestCase):
             prune(directory, newest.stat().st_mtime_ns)
             self.assertFalse(active.exists())
             self.assertTrue(newest.exists())
+
+
+class ReleasePreparationTest(unittest.TestCase):
+    def test_prepare_merges_local_compose_and_effective_extension(self):
+        helper = runpy.run_path(str(ROOT / "infra" / "prepare-release.py"))
+        with TemporaryDirectory() as tmp:
+            release, baseline, candidate = (Path(tmp) / part for part in ("release", "base", "candidate"))
+            extension = helper["JAR"]
+            for tree in (release, baseline, candidate):
+                (tree / "infra").mkdir(parents=True)
+                (tree / extension.parent).mkdir(parents=True)
+                for asset in helper["EXTENSION"]:
+                    (tree / extension.parent.parent / asset).write_text("header\n")
+            common = "one\ntwo\nthree\nfour\nfive\nsix\n"
+            for tree, image, port in ((release, "new", "8080"), (baseline, "old", "8080"),
+                                      (candidate, "old", "9000")):
+                (tree / "infra/compose.yaml").write_text(f"image: {image}\n{common}port: {port}\n")
+            (candidate / "infra/site-vpn.conf").write_text("keep local settings\n")
+            with ZipFile(candidate / extension, "w") as archive:
+                archive.writestr("clipboard.js", "custom clipboard integration\n")
+                archive.writestr("local.js", "extra local asset\n")
+            (release / "portal-reset/reset.js").write_text("new reconnect logic\n")
+
+            helper["prepare"](release, baseline, candidate)
+
+            self.assertEqual((candidate / "infra/compose.yaml").read_text(),
+                             f"image: new\n{common}port: 9000\n")
+            self.assertEqual((candidate / "infra/site-vpn.conf").read_text(), "keep local settings\n")
+            with ZipFile(candidate / extension) as archive:
+                self.assertEqual(archive.read("clipboard.js"), b"custom clipboard integration\n")
+                self.assertEqual(archive.read("reset.js"), b"new reconnect logic\n")
+                self.assertEqual(archive.read("local.js"), b"extra local asset\n")
+            self.assertEqual((candidate / ".release-base/infra/compose.yaml").read_text(),
+                             f"image: new\n{common}port: 8080\n")
+
+    def test_prepare_refuses_an_unresolved_local_change(self):
+        prepare = runpy.run_path(str(ROOT / "infra" / "prepare-release.py"))["prepare"]
+        with TemporaryDirectory() as tmp:
+            release, baseline, candidate = (Path(tmp) / part for part in ("release", "base", "candidate"))
+            for tree, value in ((release, "upstream"), (baseline, "base"), (candidate, "local")):
+                tree.mkdir()
+                (tree / "workshop").write_text(value + "\n")
+            with self.assertRaisesRegex(SystemExit, "Reconcile local changes.*workshop"):
+                prepare(release, baseline, candidate)
+            self.assertEqual((candidate / "workshop").read_text(), "local\n")
 
 
 class ActiveSessionTest(unittest.TestCase):

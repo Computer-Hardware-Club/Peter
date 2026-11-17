@@ -30,7 +30,7 @@ if [[ $EUID != 0 ]]; then
     exit 1
 fi
 
-install -d -m 0700 "$state" "$releases"
+mkdir -p -m 0700 "$state" "$releases"
 exec 8>>"$releases/lock"
 flock -x 8
 
@@ -98,13 +98,16 @@ PYCODE
 stop_portal() {
     systemctl stop "$portal"
     compose_at "$active" stop
+    # Docker retains the explicit stop across reboots. Keep systemd from
+    # bringing the stack up while the tree and image are being switched.
+    systemctl disable "$portal"
 }
 
 start_portal() {
     # Force recreation so directory bind mounts use the activated files even
     # when Compose sees no change in the path or configuration.
     compose_at "$active" up -d --force-recreate --wait --wait-timeout 120
-    systemctl start "$portal"
+    systemctl enable --now "$portal"
 }
 
 if [[ $mode == --rollback-portal ]]; then
@@ -264,7 +267,6 @@ fi
 if $fresh; then
     compose_at "$active" build guacd
 fi
-systemctl enable "$portal"
 start_portal
 systemctl enable --now workshop-recordings.timer
 rm -f -- "$releases/bootstrap-pending"

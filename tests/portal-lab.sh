@@ -79,7 +79,8 @@ case "$action" in
             -v "$source_dir/tests/recording-limit.c:/recording-limit.c:ro" \
             -v "$PWD/size-check:/out" "$PETER_LAB_GUACD_IMAGE" \
             -ec 'apk add --no-cache build-base=0.5-r3
-                 cc -Wall -Wextra -Werror /recording-limit.c -o /out/recording-limit -ldl'
+                 cc -Wall -Wextra -Werror -I/opt/guacamole/include /recording-limit.c \
+                    -L/opt/guacamole/lib -lguac -o /out/recording-limit'
         "${compose[@]}" cp size-check/recording-limit guacd:/tmp/recording-limit
         "${compose[@]}" exec -T guacd /tmp/recording-limit
         exit ;;
