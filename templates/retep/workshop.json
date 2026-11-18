@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "description": "RETEP: restore Peter Core and investigate a persistent resource-hogging process",
+  "image": "retep-lab",
+  "packages": [
+    "python3",
+    "libimage-exiftool-perl",
+    "ffmpeg"
+  ],
+  "populate_home": true,
+  "init": "init.sh",
+  "resources": {
+    "vcpus": 2,
+    "memory_mib": 2048,
+    "disk_gib": 12
+  }
+}
