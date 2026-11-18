@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import runpy
+from shutil import copyfile
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
@@ -326,6 +327,38 @@ class ActiveSessionTest(unittest.TestCase):
 
 
 class TemplateTest(unittest.TestCase):
+    def test_new_template_cli_creates_a_valid_starter_and_preserves_existing_files(self):
+        with TemporaryDirectory() as tmp:
+            checkout = Path(tmp)
+            for relative in ("workshop", "workshop_templates.py", "templates/hello-lab/init.sh",
+                             "templates/test-vm.json"):
+                target = checkout / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                copyfile(ROOT / relative, target)
+
+            def cli(*args):
+                return subprocess.run([sys.executable, str(checkout / "workshop"), *args],
+                                      capture_output=True, text=True, timeout=10)
+
+            result = cli("new-template", "my-lab", "--description", "Lab for cafés")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            catalog = checkout / "templates"
+            template = load_template(catalog, "my-lab")
+            self.assertEqual(template["description"], "Lab for cafés")
+            self.assertEqual(template["image"], "debian-trixie")
+            self.assertEqual(template["init"], (catalog / "hello-lab/init.sh").read_text())
+            result = cli("validate-template", "my-lab")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("up to 4 team(s)", result.stdout)
+
+            for name in ("my-lab", "test-vm", "../outside"):
+                with self.subTest(name=name):
+                    result = cli("new-template", name, "--description", "Replacement")
+                    self.assertEqual(result.returncode, 1, result.stdout)
+            self.assertEqual(load_template(catalog, "my-lab"), template)
+            self.assertFalse((catalog / "test-vm").exists())
+            self.assertFalse((checkout / "outside").exists())
+
     def test_example_resources_and_script_are_applied_at_guest_creation(self):
         template = load_template(ROOT / "templates", "hello-lab")
         create = workshop["create_guest"]

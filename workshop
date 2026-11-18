@@ -411,6 +411,39 @@ def check_available(slots, resources):
             raise RuntimeError(f"Reserved name {name} or {bridge} is already in use.")
 
 
+def create_template(name, description):
+    if not SLUG.fullmatch(name):
+        raise ValueError("Template names must start with a lowercase letter and have "
+                         "at most 24 lowercase letters, digits, or hyphens.")
+    if description is not None and not description.strip():
+        raise ValueError("A template description cannot be blank.")
+
+    directory = HOME_DIR / "templates"
+    folder = directory / name
+    legacy = directory / f"{name}.json"
+    if legacy.exists() or legacy.is_symlink():
+        raise ValueError(f"Template {name} already exists at {legacy}.")
+
+    script = (directory / "hello-lab" / "init.sh").read_bytes()
+    manifest = {"version": 1, "description": description or f"Workshop template for {name}.",
+                "init": "init.sh"}
+    try:
+        folder.mkdir()
+    except FileExistsError:
+        raise ValueError(f"Template path already exists at {folder}.") from None
+    try:
+        (folder / "init.sh").write_bytes(script)
+        pending = folder / ".workshop.json"
+        pending.write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8",
+        )
+        pending.rename(folder / "workshop.json")
+    except (OSError, KeyboardInterrupt):
+        shutil.rmtree(folder)
+        raise
+    return folder
+
+
 def validated_template(name):
     template = load_template(HOME_DIR / "templates", name)
     if template["init"]:
@@ -596,9 +629,19 @@ def main():
     replacement.add_argument("--expect-login", help=argparse.SUPPRESS)
     commands.add_parser("credentials").add_argument("--team", type=int, choices=TEAM_SLOTS,
                                                     required=True)
-    commands.add_parser("validate-template").add_argument("template")
-    commands.add_parser("build-template").add_argument("template")
+    scaffold = commands.add_parser("new-template", help="create a starter template in this checkout")
+    scaffold.add_argument("template", metavar="NAME", help="lowercase template ID, up to 24 characters")
+    scaffold.add_argument("--description", help="short summary shown in the officer dashboard")
+    validation = commands.add_parser("validate-template", help="check a template manifest and Bash syntax")
+    validation.add_argument("template")
+    build = commands.add_parser("build-template", help="build an Incus image with a template's extra packages")
+    build.add_argument("template")
     args = parser.parse_args()
+    if args.action == "new-template":
+        folder = create_template(args.template, args.description)
+        print(f"Created {folder}/workshop.json and init.sh.")
+        print(f"Edit the files, then run ./workshop validate-template {args.template}.")
+        return
     if args.action == "validate-template":
         template = validated_template(args.template)
         print(f"{args.template}: valid template; image {template['image']}; "

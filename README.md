@@ -2,6 +2,10 @@
 
 Peter runs one workshop at a time with up to four Debian 13 KVM virtual machines. Each team signs in to Guacamole with its team number and password. The VM accepts one active browser terminal at a time. Inside the guest, the prompt is `team-N@peter` and the team can run `sudo` without a password. Nano and `chcfetch` are included in the default template.
 
+- [Create your own workshop template](#create-your-own-workshop-template)
+- [Contribute to Peter](docs/CONTRIBUTING.md)
+- [Host and operate Peter](docs/operations.md)
+
 ## Run Peter on your own server
 
 Use an Ubuntu 24.04 amd64 host with KVM. Check that the [network ranges, ports, and storage requirements](docs/operations.md) fit your host before running the installers. From an administrative SSH session on that host, run:
@@ -23,13 +27,20 @@ ssh -N -L 127.0.0.1:8090:127.0.0.1:8090 \
 
 Open the [officer dashboard](http://127.0.0.1:8090/) and [participant portal](http://127.0.0.1:18080/) while the forward is open. Read the officer password over your administrative SSH connection with `sudo cat /etc/workshop/dashboard/officer-password`. To share the participant portal beyond your workstation, set up a public HTTPS endpoint and [configure its URL](docs/operations.md#participant-portal-url).
 
-## Create a workshop VM
+## Create your own workshop template
 
-Start from the [hello-lab example](templates/hello-lab/). Copy the directory to `templates/<your-workshop>/`, then describe the changes in `workshop.json` and add an optional `init.sh` for first-boot setup. The manifest can also declare extra Debian packages and override the VM resources. See the [template format and build steps](docs/templates.md).
+From a checkout on macOS, Linux, or Windows Subsystem for Linux, run these commands with Python 3 and Bash available.
+
+```sh
+./workshop new-template shell-tools --description "Practice exploring files and JSON"
+./workshop validate-template shell-tools
+```
+
+Edit `templates/shell-tools/workshop.json` to describe the VM and `templates/shell-tools/init.sh` to prepare files inside each team's VM. The starter includes a working script that leaves a lab handout in the team's home directory. You can create and validate a template without a Peter server. Follow the [step-by-step template guide](docs/templates.md) to customize it, install it on a server, and test it through the participant portal. Templates can be used privately or [submitted as a pull request](docs/CONTRIBUTING.md#submit-a-pull-request).
 
 ## Officer quick start
 
-Use the [officer dashboard](docs/dashboard.md) to start a workshop, add or remove teams, copy team logins, view terminal output, or refresh a VM. The dashboard starts from the standard Debian `test-vm` image.
+Use the [officer dashboard](docs/dashboard.md) to start a workshop, add or remove teams, copy team logins, view terminal output, or refresh a VM. Choose the standard Debian `test-vm` template or one you have [installed on your server](docs/templates.md#4-install-the-template-on-your-server).
 
 The same operations are available in your administrative SSH session on Peter.
 

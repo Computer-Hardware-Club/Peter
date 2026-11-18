@@ -16,12 +16,14 @@ ssh -N -L 127.0.0.1:8090:127.0.0.1:8090 YOUR_SERVER
 
 ## Run a workshop
 
-1. Sign in, enter a workshop name, choose `test-vm` or an [installed workshop template](templates.md), and select the number of teams. The default is a minimal Debian 13 VM with SSH, sudo, and the Incus agent.
+1. Sign in, enter a workshop name, choose `test-vm` or an [installed workshop template](templates.md#4-install-the-template-on-your-server), and select the number of teams. The default is a minimal Debian 13 VM with SSH, sudo, and the Incus agent.
 2. As each team shows **Ready**, open **Team login** and use **Copy password** to share the password privately. The portal username is the team number. Participants see the Computer Hardware Club title above their `team-N@peter` prompt. If a team shows **Needs retry**, select it and use **Retry VM**. The other teams can connect while it rebuilds.
 3. Use **Add team** or **Remove team** as attendance changes. The other teams keep their running VMs and credentials. Each VM accepts one active browser terminal.
 4. Select a team to mirror its screen, or open **All terminals** for a tiled view. The dashboard renders Guacamole’s graphical output, including full-screen applications and colors. Officers can see the screen without taking a participant connection or sending input. Tell participants about monitoring before they begin.
 5. Use **Reset VM** to rebuild a team with the event’s original image, initialization script, and VM resources. The participant’s open terminal shows reset progress and reconnects automatically to the fresh VM. The team keeps its password, and the other VMs continue running.
 6. Use **End workshop** to remove the VMs, team logins, and screen recordings.
+
+You can author a template on your workstation and ask an officer to install it on the host. Follow the [template tutorial](templates.md) to create one.
 
 Screen recordings use a shared 512 MiB memory volume. Each session records up to 48 MiB while at least 16 MiB remains free. The terminal connection continues if recording pauses. The dashboard shows the latest screen and warns when the recording approaches either limit. The cleanup timer removes older closed recordings and keeps the latest capture for each team slot. Removing a team or ending the workshop clears its recordings. Restarting guacd or Peter clears the memory volume.
 
