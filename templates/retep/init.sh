@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # RETEP v7 candidate - beginner-friendly evidence trail. Infection begins only when
-# a participant runs ~/Downloads/MemoryBoosterPro.run (or memboost).
+# a participant runs ~/Downloads/GTA-VI-Installer.run (or gtavi).
 set -euo pipefail
 
 if (( EUID != 0 )); then
@@ -28,7 +28,7 @@ if (( mem_kib > 3145728 )); then
   exit 1
 fi
 
-if [[ -e /usr/local/bin/memboost || -L /usr/local/bin/memboost || \
+if [[ -e /usr/local/bin/gtavi || -L /usr/local/bin/gtavi || \
       -e /etc/systemd/system/mem-boost.service || \
       -e /etc/systemd/system/peter-core.service || \
       -e /usr/local/bin/check-system || -e /usr/local/bin/peter-status ]]; then
@@ -154,7 +154,7 @@ Dear Valued Member
 Our monitoring system has detect that your computer memory is running at critical levels!!! This is a SERIOUS warning and if ignore may cause your files to loss forever.
 
 To claim your free system tune-up and 1 year premium, please click the below link and run the attached installer:
-http://chc-maintenance-desk.co/claim-memorybooster
+http://chc-maintenance-desk.co/claim-gtavi
 
 This offer expire in 24 hours. Do not reply to this email, our team will contact you.
 
@@ -427,8 +427,8 @@ touch /var/lib/retep/activated
 ACTIVATE
 chmod 0700 /usr/local/lib/retep/activate
 
-# === Actual downloaded installer: users open ~/Downloads/MemoryBoosterPro.run ===
-cat > "$team_home/Downloads/MemoryBoosterPro.run" <<'FRONTEND'
+# === Actual downloaded installer: users open ~/Downloads/GTA-VI-Installer.run ===
+cat > "$team_home/Downloads/GTA-VI-Installer.run" <<'FRONTEND'
 #!/usr/bin/env bash
 set -euo pipefail
 # The application itself will request sudo only for the installation step.
@@ -437,14 +437,14 @@ if (( EUID == 0 )); then
   exit 1
 fi
 printf '\n%s\n' '================================================'
-printf '%s\n' '               MEMORY BOOSTER PRO'
+printf '%s\n' '          GRAND THEFT AUTO VI'
 printf '%s\n' '================================================'
 for step in \
-  'Checking installed memory' \
-  'Profiling processor performance' \
-  'Rebuilding memory tables' \
-  'Installing optimization runtime' \
-  'Finalizing system adjustments'; do
+  'Checking system requirements' \
+  'Verifying game cache' \
+  'Installing runtime launcher' \
+  'Optimizing experience settings' \
+  'Finalizing installation'; do
   printf '%s ... ' "$step"
   sleep 2
   printf 'OK\n'
@@ -456,8 +456,8 @@ fi
 printf '\n\033[1;31m%s\033[0m\n\n' 'PETER HAS BEEN REPLACED. RETEP IS IN CONTROL.'
 printf '%s\n\n' 'System health warning: one or more background services have stopped responding.'
 FRONTEND
-chmod 0755 "$team_home/Downloads/MemoryBoosterPro.run"
-ln -s "$team_home/Downloads/MemoryBoosterPro.run" /usr/local/bin/memboost
+chmod 0755 "$team_home/Downloads/GTA-VI-Installer.run"
+ln -s "$team_home/Downloads/GTA-VI-Installer.run" /usr/local/bin/gtavi
 
 # === Completion checker: intentionally only shows COMPLETE / INCOMPLETE ===
 cat > /usr/local/lib/retep/check <<'CHECK'
@@ -1053,4 +1053,4 @@ chown -R "$team_user:$team_group" "$team_home/Documents" "$team_home/Downloads" 
 systemctl daemon-reload
 systemctl enable --now peter-core.service >/dev/null 2>&1
 
-echo "RETEP v7 ready for $team_user. Start with: ~/Downloads/MemoryBoosterPro.run"
+echo "RETEP v7 ready for $team_user. Start with: ~/Downloads/GTA-VI-Installer.run"
