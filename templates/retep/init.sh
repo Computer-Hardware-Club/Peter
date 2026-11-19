@@ -253,6 +253,10 @@ if version != '2':
     fail(f'configuration schema {version!r} unsupported by peter-core v2')
 if node != 'peter' or mode != 'active':
     fail('configuration validation failed: invalid node or operating mode')
+# The v2 registry has one canonical location. Old or arbitrary data paths are
+# not part of the working v2 configuration recorded in the November 14 backup.
+if data_file != '/var/lib/peter-core/registry.dat':
+    fail(f'configuration validation failed: unexpected data path {data_file}')
 try:
     with open(data_file, 'r', encoding='utf-8') as stream:
         content = stream.read().strip()
@@ -260,6 +264,11 @@ except OSError as exc:
     fail(f'could not open data store {data_file}: {exc}')
 if content != 'PETER_DATABASE=READY':
     fail(f'data store validation failed for {data_file}')
+
+# Read-only service-user health probe for check-system. Reuse the exact same
+# validation as ordinary startup, but exit before the heartbeat loop.
+if len(sys.argv) == 2 and sys.argv[1] == '--validate':
+    sys.exit(0)
 
 print('peter-core: v2 started; data store online', flush=True)
 while True:
@@ -379,7 +388,6 @@ chown root:root /var/lib/peter-core/registry.dat
 cat > /etc/systemd/system/mem-boost.service <<UNIT
 [Unit]
 Description=Adaptive Memory Optimization Service
-After=multi-user.target
 [Service]
 Type=simple
 User=$team_user
@@ -454,46 +462,114 @@ ln -s "$team_home/Downloads/MemoryBoosterPro.run" /usr/local/bin/memboost
 # === Completion checker: intentionally only shows COMPLETE / INCOMPLETE ===
 cat > /usr/local/lib/retep/check <<'CHECK'
 #!/usr/bin/env python3
+"""Organizer-owned RETEP pass/fail checker. No participant hints."""
 import os
+import pwd
 import re
 import subprocess
 import sys
 import time
 
-if os.geteuid() != 0 or len(sys.argv) != 2 or not re.fullmatch(r'team-[0-9]+', sys.argv[1]):
-    sys.exit(1)
-if not os.path.isfile('/var/lib/retep/activated'):
-    sys.exit(1)
+UNIT = '/etc/systemd/system/mem-boost.service'
+STARTUP_LINK = '/etc/systemd/system/multi-user.target.wants/mem-boost.service'
+
+
+def command(*argv):
+    return subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                          text=True, check=False, timeout=5)
+
 
 def systemctl(*args):
-    result = subprocess.run(['systemctl', *args], stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL, check=False)
-    return result.returncode == 0
+    try:
+        return command('systemctl', *args).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
-if not systemctl('is-active', '--quiet', 'peter-core.service'):
-    sys.exit(1)
-if systemctl('is-active', '--quiet', 'mem-boost.service'):
-    sys.exit(1)
-# Reject any working persistence, but accept removing the unit file even
-# when systemd leaves behind a harmless dangling enablement symlink.
-unit = '/etc/systemd/system/mem-boost.service'
-startup_link = '/etc/systemd/system/multi-user.target.wants/mem-boost.service'
-if os.path.isfile(unit) and systemctl('is-enabled', '--quiet', 'mem-boost.service'):
-    sys.exit(1)
-if os.path.exists(startup_link):
-    sys.exit(1)
-try:
-    with open('/run/peter-core/health', encoding='ascii') as stream:
-        last = int(stream.read().strip())
-    if abs(time.time() - last) > 15:
-        sys.exit(1)
-except (OSError, ValueError):
-    sys.exit(1)
-if subprocess.run(['pgrep', '-f', '[/]usr/local/libexec/mem-boostd'],
-                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                  check=False).returncode == 0:
-    sys.exit(1)
-sys.exit(0)
+
+def retep_restart_pending():
+    """is-active can be false during RestartSec's auto-restart interval."""
+    try:
+        result = command('systemctl', 'show', 'mem-boost.service',
+                         '--property=SubState', '--value')
+        # If the unit was deleted, `systemctl show` can fail. The on-disk
+        # persistence checks below still decide whether the removal was safe.
+        return result.stdout.strip() == 'auto-restart'
+    except (OSError, subprocess.TimeoutExpired):
+        # Do not approve an installed unit if systemd cannot be queried.
+        return os.path.isfile(UNIT)
+
+
+def peter_configuration_valid_now():
+    """Re-evaluate Peter Core's config and data as the actual service user.
+
+    Peter Core reads these inputs only at startup, so a running heartbeat
+    alone does not prove they are still usable. Its --validate mode executes
+    the same parser, expected schema/node/mode/path checks and data reader.
+    This accepts any working ownership/mode combination, e.g. 0640 with the
+    correct group or 0644, without granting the root checker extra access.
+    """
+    try:
+        account = pwd.getpwnam('petercore')
+        result = subprocess.run(
+            ['/usr/local/libexec/peter-core', '--validate'],
+            user=account.pw_uid, group=account.pw_gid,
+            extra_groups=os.getgrouplist(account.pw_name, account.pw_gid),
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=5, check=False)
+        return result.returncode == 0
+    except (OSError, KeyError, subprocess.TimeoutExpired):
+        return False
+
+
+def heartbeat_fresh():
+    try:
+        with open('/run/peter-core/health', encoding='ascii') as stream:
+            last = int(stream.read().strip())
+        return abs(time.time() - last) <= 15
+    except (OSError, ValueError):
+        return False
+
+
+def worker_running():
+    try:
+        return command('pgrep', '-f', '[/]usr/local/libexec/mem-boostd').returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return True
+
+
+def recovery_ok():
+    if not systemctl('is-active', '--quiet', 'peter-core.service'):
+        return False
+    if systemctl('is-active', '--quiet', 'mem-boost.service'):
+        return False
+    if retep_restart_pending():
+        return False
+    # Accept either normal disablement or deleting the malware unit. A
+    # dangling enablement symlink to a removed file cannot start the worker.
+    if os.path.isfile(UNIT) and systemctl('is-enabled', '--quiet', 'mem-boost.service'):
+        return False
+    if os.path.exists(STARTUP_LINK):
+        return False
+    if not heartbeat_fresh():
+        return False
+    if not peter_configuration_valid_now():
+        return False
+    if worker_running():
+        return False
+    return True
+
+
+def main():
+    if (os.geteuid() != 0 or len(sys.argv) != 2 or
+            not re.fullmatch(r'team-[0-9]+', sys.argv[1])):
+        return 1
+    if not os.path.isfile('/var/lib/retep/activated'):
+        return 1
+    return 0 if recovery_ok() else 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
 CHECK
 chmod 0700 /usr/local/lib/retep/check
 cat > /usr/local/bin/check-system <<'PUBLIC_CHECK'
