@@ -29,7 +29,7 @@ if (( mem_kib > 3145728 )); then
 fi
 
 if [[ -e /usr/local/bin/gtavi || -L /usr/local/bin/gtavi || \
-      -e /etc/systemd/system/mem-boost.service || \
+      -e /etc/systemd/system/gtavi.service || \
       -e /etc/systemd/system/peter-core.service || \
       -e /usr/local/bin/check-system || -e /usr/local/bin/peter-status ]]; then
   echo 'Existing workshop installation detected. Reset the team VM first.' >&2
@@ -145,21 +145,21 @@ notes: the vendor's site has changed hands 3 times. don't trust the download but
 TXT
 
 cat > "$team_home/Downloads/you-have-won.txt" <<'TXT'
-From: it-support@chc-maintenance-desk.co
+From: no-reply@gtavi-preload-rewards.co
 To: team-n@computerhardwareclub.org
-Subject: URGENT: Your system performance is LOW!!!
+Subject: CONGRATULATIONS!!! Your account is one of 500 picked for GTA VI early preload!!!
 
-Dear Valued Member
+Dear Valued Gamer
 
-Our monitoring system has detect that your computer memory is running at critical levels!!! This is a SERIOUS warning and if ignore may cause your files to loss forever.
+Our system has select your computer for the EXCLUSIVE GTA VI preload!!! The official release is soon but the download is HUGE and many computer are not ready. If you dont install the launcher now, you may lose your spot FOREVER!!!
 
-To claim your free system tune-up and 1 year premium, please click the below link and run the attached installer:
+To claim your copy and 1 year premium, please click the below link and run the attached installer:
 http://chc-maintenance-desk.co/claim-gtavi
 
 This offer expire in 24 hours. Do not reply to this email, our team will contact you.
 
 Regards
-Certified Maintenance Partner
+Certified Game Partner
 TXT
 sed -i "s/team-n@/${team_user}@/" "$team_home/Downloads/you-have-won.txt"
 
@@ -314,7 +314,7 @@ PETER_UNIT
 chmod 0644 /etc/systemd/system/peter-core.service
 
 # === Real resource consumption, bounded by systemd to the disposable guest ===
-cat > /usr/local/libexec/mem-boostd <<'WORKER'
+cat > /usr/local/libexec/gtavid <<'WORKER'
 #!/usr/bin/env python3
 import ctypes
 import hashlib
@@ -334,7 +334,7 @@ def memory_info():
     return found['MemTotal'], found['MemAvailable']
 
 try:
-    ctypes.CDLL(None).prctl(15, b'mem-boostd', 0, 0, 0)
+    ctypes.CDLL(None).prctl(15, b'gtavid', 0, 0, 0)
 except Exception:
     pass
 
@@ -352,7 +352,7 @@ if allocation >= 32 * MIB:
     memory = mmap.mmap(-1, allocation, access=mmap.ACCESS_WRITE)
     for offset in range(0, allocation, 4096):
         memory[offset] = 1
-print('mem-boostd: optimization runtime online', flush=True)
+print('gtavid: launcher runtime online', flush=True)
 
 block = b'R' * MIB
 def load_cpu():
@@ -363,7 +363,7 @@ for _ in range(2):
 while True:
     time.sleep(30)
 WORKER
-chmod 0755 /usr/local/libexec/mem-boostd
+chmod 0755 /usr/local/libexec/gtavid
 
 # === Incident activator (root-only, called by the downloaded application) ===
 cat > /usr/local/lib/retep/activate <<'ACTIVATE'
@@ -385,13 +385,13 @@ BROKEN_CONFIG
 chmod 0600 /var/lib/peter-core/registry.dat
 chown root:root /var/lib/peter-core/registry.dat
 
-cat > /etc/systemd/system/mem-boost.service <<UNIT
+cat > /etc/systemd/system/gtavi.service <<UNIT
 [Unit]
-Description=Adaptive Memory Optimization Service
+Description=Grand Theft Auto VI Runtime Launcher
 [Service]
 Type=simple
 User=$team_user
-ExecStart=/usr/local/libexec/mem-boostd
+ExecStart=/usr/local/libexec/gtavid
 Restart=always
 RestartSec=3
 NoNewPrivileges=yes
@@ -405,7 +405,7 @@ TasksMax=12
 [Install]
 WantedBy=multi-user.target
 UNIT
-chmod 0644 /etc/systemd/system/mem-boost.service
+chmod 0644 /etc/systemd/system/gtavi.service
 # A trace in the operator's regular logs, alongside the genuine system journal.
 # Nothing here names the responsible service or gives repair instructions.
 now=$(date '+%Y-%m-%d %H:%M:%S %z')
@@ -417,8 +417,8 @@ printf '%s ALERT: data-file access metadata modified: /var/lib/peter-core/regist
   "$now" >> /var/log/peter-workshop/system-history.log
 systemctl daemon-reload
 systemctl restart peter-core.service >/dev/null 2>&1 || true
-if ! systemctl enable --now mem-boost.service >/dev/null 2>&1; then
-  echo 'Optimization runtime failed to initialize.' >&2
+if ! systemctl enable --now gtavi.service >/dev/null 2>&1; then
+  echo 'Launcher runtime failed to initialize.' >&2
   exit 1
 fi
 printf '%s audit: service health alert detected after installer execution\n' \
@@ -470,8 +470,8 @@ import subprocess
 import sys
 import time
 
-UNIT = '/etc/systemd/system/mem-boost.service'
-STARTUP_LINK = '/etc/systemd/system/multi-user.target.wants/mem-boost.service'
+UNIT = '/etc/systemd/system/gtavi.service'
+STARTUP_LINK = '/etc/systemd/system/multi-user.target.wants/gtavi.service'
 
 
 def command(*argv):
@@ -489,7 +489,7 @@ def systemctl(*args):
 def retep_restart_pending():
     """is-active can be false during RestartSec's auto-restart interval."""
     try:
-        result = command('systemctl', 'show', 'mem-boost.service',
+        result = command('systemctl', 'show', 'gtavi.service',
                          '--property=SubState', '--value')
         # If the unit was deleted, `systemctl show` can fail. The on-disk
         # persistence checks below still decide whether the removal was safe.
@@ -532,7 +532,7 @@ def heartbeat_fresh():
 
 def worker_running():
     try:
-        return command('pgrep', '-f', '[/]usr/local/libexec/mem-boostd').returncode == 0
+        return command('pgrep', '-f', '[/]usr/local/libexec/gtavid').returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return True
 
@@ -540,13 +540,13 @@ def worker_running():
 def recovery_ok():
     if not systemctl('is-active', '--quiet', 'peter-core.service'):
         return False
-    if systemctl('is-active', '--quiet', 'mem-boost.service'):
+    if systemctl('is-active', '--quiet', 'gtavi.service'):
         return False
     if retep_restart_pending():
         return False
     # Accept either normal disablement or deleting the malware unit. A
     # dangling enablement symlink to a removed file cannot start the worker.
-    if os.path.isfile(UNIT) and systemctl('is-enabled', '--quiet', 'mem-boost.service'):
+    if os.path.isfile(UNIT) and systemctl('is-enabled', '--quiet', 'gtavi.service'):
         return False
     if os.path.exists(STARTUP_LINK):
         return False
@@ -691,7 +691,7 @@ DIR = Path('/var/lib/retep')
 STATE = DIR / 'dialogue-state.json'
 LOCK = DIR / 'dialogue-state.lock'
 START = DIR / 'activated'
-UNIT = Path('/etc/systemd/system/mem-boost.service')
+UNIT = Path('/etc/systemd/system/gtavi.service')
 TARGET = Path('/var/lib/peter-core/registry.dat')
 CONFIG = Path('/etc/peter-core/core.conf')
 COMMANDS = re.compile(r'\b(?:top|ps|free|systemctl|journalctl|cat|less|diff|stat|grep|find)\b')
@@ -747,17 +747,17 @@ def health_ok():
 
 
 def snapshot():
-    restart = call('systemctl', 'show', 'mem-boost.service',
+    restart = call('systemctl', 'show', 'gtavi.service',
                    '--property=NRestarts', '--value').stdout.strip()
-    main_pid = call('systemctl', 'show', 'mem-boost.service',
+    main_pid = call('systemctl', 'show', 'gtavi.service',
                     '--property=MainPID', '--value').stdout.strip()
-    sub_state = call('systemctl', 'show', 'mem-boost.service',
+    sub_state = call('systemctl', 'show', 'gtavi.service',
                      '--property=SubState', '--value').stdout.strip()
     # A systemd RestartSec delay is not a successful service stop.
     pending_restart = sub_state == 'auto-restart'
     return dict(
-        resource_active=is_active('mem-boost.service') or pending_restart,
-        resource_enabled=is_enabled('mem-boost.service'),
+        resource_active=is_active('gtavi.service') or pending_restart,
+        resource_enabled=is_enabled('gtavi.service'),
         config_ok=correct_config(),
         data_ok=readable_data(),
         core_ok=health_ok(),
