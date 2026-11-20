@@ -40,7 +40,7 @@ Edit `templates/shell-tools/workshop.json` to describe the VM and `templates/she
 
 ## Officer quick start
 
-Use the [officer dashboard](docs/dashboard.md) to start a workshop, add or remove teams, copy team logins, view terminal output, or refresh a VM. Choose the standard Debian `test-vm` template or one you have [installed on your server](docs/templates.md#4-install-the-template-on-your-server).
+Use the [officer dashboard](docs/dashboard.md) to start a workshop, add or remove teams, copy team logins, view terminal output, or refresh a VM. The bundled templates are **Base** for standard Debian and **Malware** for the RETEP workshop. You can also [install your own template](docs/templates.md#4-install-the-template-on-your-server).
 
 The same operations are available in your administrative SSH session on Peter.
 

@@ -42,7 +42,7 @@ def catalog():
         except (OSError, ValueError):
             continue
         if template["image"] in aliases:
-            templates.append({"id": name, "description": template["description"],
+            templates.append({"id": name, "label": template["label"], "description": template["description"],
                               "teamLimit": team_limit(template["resources"])})
     return templates
 

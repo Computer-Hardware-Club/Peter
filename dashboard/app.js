@@ -133,10 +133,10 @@ function renderTemplates(templates) {
   const signature = JSON.stringify(templates);
   if (model.templateOptions !== signature) {
     const selected = select.value;
-    const options = templates.map((template) => new Option(template.id, template.id));
+    const options = templates.map((template) => new Option(template.label || template.id, template.id));
     select.replaceChildren(...options);
     if (templates.some((template) => template.id === selected)) select.value = selected;
-    else if (templates.some((template) => template.id === "test-vm")) select.value = "test-vm";
+    else if (templates.some((template) => template.id === "base")) select.value = "base";
     model.templateOptions = signature;
   }
   const template = templates.find((option) => option.id === select.value);

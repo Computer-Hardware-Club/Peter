@@ -50,12 +50,16 @@ def load_template(directory, name):
     if not manifest.resolve().is_relative_to(directory.resolve()):
         raise ValueError(f"Template {name} is outside the template directory.")
     data = json.loads(manifest.read_text(encoding="utf-8"))
-    allowed = {"image", "description"} if legacy else {"version", "description", "image", "packages", "init", "resources"}
-    allowed.add("populate_home")
+    allowed = {"image", "description", "label", "populate_home"}
+    if not legacy:
+        allowed.update({"version", "packages", "init", "resources"})
     if not isinstance(data, dict) or data.keys() - allowed:
         raise ValueError(f"Template {name} has unknown fields or is not a JSON object.")
     if not legacy and (type(data.get("version")) is not int or data["version"] != 1):
         raise ValueError(f"Template {name} must use version 1.")
+    label = data.get("label", name)
+    if not isinstance(label, str) or not label.strip():
+        raise ValueError(f"Template {name} must have a nonblank label.")
     description = data.get("description", "" if legacy else None)
     if not isinstance(description, str) or (not legacy and not description.strip()):
         raise ValueError(f"Template {name} must have a description.")
@@ -88,6 +92,6 @@ def load_template(directory, name):
             script = source.read(65537)
         if not script.strip() or len(script.encode("utf-8")) > 65536:
             raise ValueError(f"Template {name}: init.sh must contain 1 to 65536 bytes of Bash.")
-    return {"description": description, "image": image, "packages": packages,
+    return {"label": label.strip(), "description": description, "image": image, "packages": packages,
             "resources": {**DEFAULT_RESOURCES, **resources}, "init": script,
             "populate_home": populate_home}

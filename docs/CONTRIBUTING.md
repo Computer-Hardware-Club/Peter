@@ -41,8 +41,8 @@ Run the checks that cover your change. These examples work from a regular checko
 
 ```sh
 git diff --check
-./workshop validate-template hello-lab
-./workshop validate-template test-vm
+./workshop validate-template base
+./workshop validate-template malware
 python3 -m unittest discover -s tests -q
 node --test portal-reset/*.test.js
 ```

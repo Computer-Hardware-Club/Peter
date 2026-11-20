@@ -424,7 +424,7 @@ def create_template(name, description):
     if legacy.exists() or legacy.is_symlink():
         raise ValueError(f"Template {name} already exists at {legacy}.")
 
-    script = (directory / "hello-lab" / "init.sh").read_bytes()
+    script = (directory / "starter-init.sh").read_bytes()
     manifest = {"version": 1, "description": description or f"Workshop template for {name}.",
                 "init": "init.sh"}
     try:
@@ -607,7 +607,7 @@ def main():
     commands = parser.add_subparsers(dest="action", required=True)
     new = commands.add_parser("deploy")
     new.add_argument("name")
-    new.add_argument("--template", default="test-vm")
+    new.add_argument("--template", default="base")
     new.add_argument("--teams", type=int, choices=TEAM_SLOTS, required=True)
     commands.add_parser("add").add_argument("--expect-run", help=argparse.SUPPRESS)
     removal = commands.add_parser("remove")
