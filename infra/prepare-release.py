@@ -70,6 +70,19 @@ def prepare(release, baseline, candidate):
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
 
+    for previous in sorted((baseline / "templates").rglob("*")):
+        name = previous.relative_to(baseline)
+        if not previous.is_file() or (release / name).exists():
+            continue
+        target = candidate / name
+        if target.is_symlink() or any((candidate / parent).is_symlink() for parent in name.parents):
+            conflicts.append(str(name))
+        elif target.exists():
+            if target.is_file() and target.read_bytes() == previous.read_bytes():
+                target.unlink()
+            else:
+                conflicts.append(str(name))
+
     if conflicts:
         raise SystemExit("Reconcile local changes in the staged release before applying: " + ", ".join(conflicts))
     jar.parent.mkdir(parents=True, exist_ok=True)

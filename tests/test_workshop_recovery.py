@@ -281,6 +281,10 @@ class ReleasePreparationTest(unittest.TestCase):
                                       (candidate, "old", "9000")):
                 (tree / "infra/compose.yaml").write_text(f"image: {image}\n{common}port: {port}\n")
             (candidate / "infra/site-vpn.conf").write_text("keep local settings\n")
+            for tree in (baseline, candidate):
+                (tree / "templates").mkdir()
+                (tree / "templates/retired.json").write_text("{}\n")
+            (candidate / "templates/private.json").write_text("{}\n")
             with ZipFile(candidate / extension, "w") as archive:
                 archive.writestr("clipboard.js", "custom clipboard integration\n")
                 archive.writestr("local.js", "extra local asset\n")
@@ -291,6 +295,8 @@ class ReleasePreparationTest(unittest.TestCase):
             self.assertEqual((candidate / "infra/compose.yaml").read_text(),
                              f"image: new\n{common}port: 9000\n")
             self.assertEqual((candidate / "infra/site-vpn.conf").read_text(), "keep local settings\n")
+            self.assertFalse((candidate / "templates/retired.json").exists())
+            self.assertTrue((candidate / "templates/private.json").is_file())
             with ZipFile(candidate / extension) as archive:
                 self.assertEqual(archive.read("clipboard.js"), b"custom clipboard integration\n")
                 self.assertEqual(archive.read("reset.js"), b"new reconnect logic\n")
@@ -327,11 +333,19 @@ class ActiveSessionTest(unittest.TestCase):
 
 
 class TemplateTest(unittest.TestCase):
+    def test_dashboard_catalog_lists_the_two_bundled_templates(self):
+        images = [{"type": "virtual-machine", "aliases": [{"name": name}]}
+                  for name in ("debian-trixie", "retep-lab")]
+        catalog = host.__globals__["catalog"]
+        with patch.dict(catalog.__globals__, {"INSTALL": ROOT, "run": lambda *a, **k: json.dumps(images)}):
+            self.assertEqual([(item["id"], item["label"]) for item in catalog()],
+                             [("base", "Base"), ("malware", "Malware")])
+
     def test_new_template_cli_creates_a_valid_starter_and_preserves_existing_files(self):
         with TemporaryDirectory() as tmp:
             checkout = Path(tmp)
-            for relative in ("workshop", "workshop_templates.py", "templates/hello-lab/init.sh",
-                             "templates/test-vm.json"):
+            for relative in ("workshop", "workshop_templates.py", "templates/starter-init.sh",
+                             "templates/base/workshop.json"):
                 target = checkout / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 copyfile(ROOT / relative, target)
@@ -346,25 +360,27 @@ class TemplateTest(unittest.TestCase):
             template = load_template(catalog, "my-lab")
             self.assertEqual(template["description"], "Lab for cafés")
             self.assertEqual(template["image"], "debian-trixie")
-            self.assertEqual(template["init"], (catalog / "hello-lab/init.sh").read_text())
+            self.assertEqual(template["label"], "my-lab")
+            self.assertEqual(template["init"], (catalog / "starter-init.sh").read_text())
             result = cli("validate-template", "my-lab")
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("up to 4 team(s)", result.stdout)
 
-            for name in ("my-lab", "test-vm", "../outside"):
+            base = load_template(catalog, "base")
+            for name in ("my-lab", "base", "../outside"):
                 with self.subTest(name=name):
                     result = cli("new-template", name, "--description", "Replacement")
                     self.assertEqual(result.returncode, 1, result.stdout)
             self.assertEqual(load_template(catalog, "my-lab"), template)
-            self.assertFalse((catalog / "test-vm").exists())
+            self.assertEqual(load_template(catalog, "base"), base)
             self.assertFalse((checkout / "outside").exists())
 
-    def test_example_resources_and_script_are_applied_at_guest_creation(self):
-        template = load_template(ROOT / "templates", "hello-lab")
+    def test_template_resources_and_script_are_applied_at_guest_creation(self):
         create = workshop["create_guest"]
         calls = []
-        event = {"run": "a" * 16, "image": "b" * 64, "resources": template["resources"],
-                 "init": template["init"]}
+        initializer = (ROOT / "templates/starter-init.sh").read_text()
+        event = {"run": "a" * 16, "image": "b" * 64,
+                 "resources": {"vcpus": 1, "memory_mib": 1024, "disk_gib": 12}, "init": initializer}
         with patch.dict(create.__globals__, {"incus": lambda *args: calls.append(args)}):
             create(1, event, "ssh-ed25519 test-key")
         self.assertIn("limits.cpu=1", calls[0])
@@ -373,7 +389,7 @@ class TemplateTest(unittest.TestCase):
         encoded = next(arg for arg in calls[0] if arg.startswith("cloud-init.user-data="))
         config = json.loads(encoded.split("\n", 1)[1])
         script = next(file for file in config["write_files"] if file["path"].endswith("/init.sh"))
-        self.assertEqual(script["content"], template["init"])
+        self.assertEqual(script["content"], initializer)
         self.assertIn("bash -e /usr/local/lib/workshop/init.sh", config["runcmd"][-1][-1])
 
     def test_failed_initializer_prevents_portal_readiness(self):

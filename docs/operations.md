@@ -30,7 +30,7 @@ Keep the officer dashboard on its separate LAN or SSH address. Peter’s existin
 
 ## Templates
 
-Use the [workshop VM format](templates.md) to define packages, guest setup, and resources. The default `test-vm` template points to the private Incus alias `debian-trixie`, built from an upstream Debian 13 cloud image cached as `debian-trixie-base`.
+Use the [workshop VM format](templates.md) to define packages, guest setup, and resources. The default **Base** template (`base`) uses the private Incus alias `debian-trixie`, built from an upstream Debian 13 cloud image cached as `debian-trixie-base`. The **Malware** template (`malware`) uses the `retep-lab` image. If that alias is missing, run `sudo workshop build-template malware` between events.
 
 You can also import a trusted custom Incus VM image into the `workshop` project. Use Debian 13 with cloud-init and Incus VM agent support, include `openssh-server` and `sudo`, and remove passwords, authorized keys, machine identity, and SSH host keys before publishing. Never publish a team VM after participants have accessed it.
 

@@ -1,4 +1,6 @@
 {
+  "version": 1,
+  "label": "Base",
   "image": "debian-trixie",
   "description": "Standard Debian 13 virtual machine with SSH and a sudo-enabled student shell."
 }

@@ -29,7 +29,7 @@ templates/
     init.sh
 ```
 
-`shell-tools` is the template ID. Officers use it in the dashboard and with `workshop deploy --template`. Choose an ID that starts with a lowercase ASCII letter and is at most 24 characters long. Use lowercase ASCII letters, digits, and hyphens. The command refuses to replace an existing template. You can also make a copy of [`templates/hello-lab/`](../templates/hello-lab/) under a new ID and edit that copy.
+`shell-tools` is the template ID. Officers use it with `workshop deploy --template`. The dashboard displays the ID unless the manifest includes a label. Choose an ID that starts with a lowercase ASCII letter and is at most 24 characters long. Use lowercase ASCII letters, digits, and hyphens. The command refuses to replace an existing template.
 
 ## 2. Customize the VM and handout
 
@@ -78,6 +78,7 @@ Use [the JSON Schema](workshop.schema.json) for editor validation. JSON uses dou
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `version` | Yes | Set to the integer `1`. |
+| `label` | No | Nonblank name shown in the officer dashboard. Defaults to the template ID. |
 | `description` | Yes | Write a short, nonblank sentence that tells officers what the template is for. |
 | `image` | With extra packages | Local Incus VM image alias. Defaults to `debian-trixie`. Use the same naming rules as for the template ID. |
 | `packages` | No | Array of extra Debian package names. Defaults to an empty list. Use plain names such as `jq`, without versions or architecture qualifiers. |
@@ -89,7 +90,7 @@ Use [the JSON Schema](workshop.schema.json) for editor validation. JSON uses dou
 
 Put resource overrides inside a single `"resources"` object, for example `"resources": {"disk_gib": 12}`. The workshop can allocate up to four VMs, 8 vCPUs, and 8192 MiB RAM in total. With 4 vCPUs and 4096 MiB per VM, an event can run two teams. Omitted resource settings retain their defaults.
 
-Older flat files such as [`templates/test-vm.json`](../templates/test-vm.json) still load. Use `templates/<id>/workshop.json` for new templates.
+Older flat files in the form `templates/<id>.json` still load. Use `templates/<id>/workshop.json` for new templates.
 
 <a id="validate-install-and-run"></a>
 

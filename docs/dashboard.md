@@ -16,7 +16,7 @@ ssh -N -L 127.0.0.1:8090:127.0.0.1:8090 YOUR_SERVER
 
 ## Run a workshop
 
-1. Sign in, enter a workshop name, choose `test-vm` or an [installed workshop template](templates.md#4-install-the-template-on-your-server), and select the number of teams. The default is a minimal Debian 13 VM with SSH, sudo, and the Incus agent.
+1. Sign in, enter a workshop name, choose a template, and select the number of teams. **Base** is the default Debian 13 VM with SSH, sudo, and the Incus agent. **Malware** runs the RETEP workshop and appears once its image is installed.
 2. As each team shows **Ready**, open **Team login** and use **Copy password** to share the password privately. The portal username is the team number. Participants see the Computer Hardware Club title above their `team-N@peter` prompt. If a team shows **Needs retry**, select it and use **Retry VM**. The other teams can connect while it rebuilds.
 3. Use **Add team** or **Remove team** as attendance changes. The other teams keep their running VMs and credentials. Each VM accepts one active browser terminal.
 4. Select a team to mirror its screen, or open **All terminals** for a tiled view. The dashboard renders Guacamole’s graphical output, including full-screen applications and colors. Officers can see the screen without taking a participant connection or sending input. Tell participants about monitoring before they begin.
