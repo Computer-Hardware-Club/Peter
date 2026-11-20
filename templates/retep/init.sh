@@ -856,7 +856,10 @@ def ambient(data, current, now):
 
 
 def say(message):
-    print('\n[RETEP] ' + message.replace('\n', '\n[RETEP] ') + '\n')
+    lines = '\n'.join(f'[RETEP] {line}' for line in message.split('\n'))
+    if sys.stdout.isatty():
+        lines = f'\033[31m{lines}\033[39m'
+    print(f'\n{lines}\n')
 
 
 def main():
