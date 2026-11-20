@@ -409,7 +409,7 @@ chmod 0644 /etc/systemd/system/gtavi.service
 # A trace in the operator's regular logs, alongside the genuine system journal.
 # Nothing here names the responsible service or gives repair instructions.
 now=$(date '+%Y-%m-%d %H:%M:%S %z')
-printf '%s WARNING: unverified performance installer executed by %s\n' \
+printf '%s WARNING: unverified GTA VI installer executed by %s\n' \
   "$now" "$team_user" >> /var/log/peter-workshop/system-history.log
 printf '%s ALERT: configuration modified: /etc/peter-core/core.conf\n' \
   "$now" >> /var/log/peter-workshop/system-history.log
