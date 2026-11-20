@@ -922,13 +922,13 @@ fi
 PROMPT_HOOK
 chown "$team_user:$team_group" "$team_home/.bashrc"
 
-# === Tiny, valid media Easter eggs (15 pictures, 5 MP4s) ===
-# These binaries are included in this script because Peter's native template
+# === Tiny, valid media Easter eggs ===
+# The 15 pictures and 5 MP4s are included here because Peter's native template
 # format only transfers workshop.json and init.sh to a guest. They are images
 # and silent low-resolution videos with Peter-supplied fictional metadata.
 # No download is needed, and historic file modification times are retained.
 install -d -o "$team_user" -g "$team_group" -m 0755 \
-  "$team_home/Pictures" "$team_home/Videos"
+  "$team_home/Pictures" "$team_home/Videos" "$team_home/Music"
 base64 --decode <<'RETEP_MEDIA_ARCHIVE' | tar -xz -C "$team_home"
 H4sIAFMI/moC/+2dC3wcxX3H9yTZFsKyLWMbG/wYGxsb4jvv8/buEsWWZdkS+C2BwSE59m7ndIvu
 ds+7ezqJT9MaYgg4hCY0oYnLJzUipSYfQsEJgaRpYkhCiJOmzYNnSMu7QEoSKHl++qn6n73d0+p0
@@ -1049,7 +1049,39 @@ BfoWfybxo9VshIkOQinQ6ojsihVyZbjjj2tYGNSOSSQ7SmDSGqxjs5uMvj6M122lXVvhCvJFg91z
 OzUbJ9OoOcqzIwvvaJDjO3g2JnJjaPz9OhXeVHificKbBhpooIEGGmiggQYaaKCBBhqOO/w/gcau
 VwDwAAA=
 RETEP_MEDIA_ARCHIVE
-chown -R "$team_user:$team_group" "$team_home/Pictures" "$team_home/Videos"
+
+# Create one-second silent MP3s with readable ID3 tags.
+add_song() {
+  local title="$1" artist="$2" album="$3" year="$4" track="$5" genre="$6" comment="$7"
+  ffmpeg -nostdin -hide_banner -loglevel error -y \
+    -f lavfi -i 'anullsrc=r=44100:cl=mono' -t 1 -c:a libmp3lame -id3v2_version 3 \
+    -metadata "title=$title" -metadata "artist=$artist" -metadata "album=$album" \
+    -metadata "date=$year" -metadata "track=$track" -metadata "genre=$genre" \
+    -metadata "comment=$comment" "$team_home/Music/$title.mp3"
+}
+
+add_song 'Achy Breaky Heart' 'Billy Ray Cyrus' 'Some Gave All' 1992 2 'Country' \
+  "don't tell my rack, but play it when someone yanks a live cable"
+add_song 'Beans' 'Kurt Cobain' 'Montage of Heck: The Home Recordings (Deluxe Soundtrack)' 2015 7 'Lo-fi home recording' \
+  'Kurt moaning for beans, basically every attendee before coffee'
+add_song 'Bohemian Rhapsody' 'Queen' 'A Night at the Opera' 1975 11 'Rock' \
+  'no chorus, zero throttle control. my spirit animal'
+add_song 'Istanbul (Not Constantinople)' 'They Might Be Giants' 'Flood' 1990 4 'Alternative rock' \
+  'the Johns borrowed it from Kennedy and Simon, like you borrow my percs without asking'
+add_song 'Paranoid Android' 'Radiohead' 'OK Computer' 1997 2 'Alternative rock' \
+  'four sections of escalating rage, same as me watching someone daisy-chain power strips'
+add_song 'Sandstorm' 'Darude' 'Before the Storm' 2000 1 'Trance' \
+  'the correct answer to "what song is this" forever. drop lands like a failed RAID array'
+add_song '99 Luftballons' 'Nena' '99 Luftballons' 1984 11 'Neue Deutsche Welle' \
+  'play both versions. watch the room pick a side, start a war'
+add_song 'Harder, Better, Faster, Stronger' 'Daft Punk' 'Discovery' 2001 4 'French house' \
+  'the only honest description of what officers demand of a 2013 server'
+add_song 'Thermal Throttling Blues' 'retep' 'Percs on the Reg' 2026 1 'Country parody' \
+  'my number one single about a fan that gives up before you do'
+add_song 'Ping of Doom' 'retep feat. The Rack Units' 'Server Room Sessions Vol. 6' 2026 13 'Industrial' \
+  'evil acts like losing packets on a demo'
+
+chown -R "$team_user:$team_group" "$team_home/Pictures" "$team_home/Videos" "$team_home/Music"
 
 # Make participant artifacts belong to their team account.
 chown -R "$team_user:$team_group" "$team_home/Documents" "$team_home/Downloads" "$team_home/Logs"
